@@ -136,7 +136,12 @@
 
   .meal-card{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:12px 14px;}
   .meal-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px;}
-  .meal-total{color:var(--steel);font-size:11.5px;margin-bottom:8px;}
+  .meal-total{color:var(--chalk);font-size:14px;font-weight:600;margin-bottom:8px;}
+  .meal-per-serving-label{color:var(--steel);font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.5px;}
+  .meal-servings{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}
+  .meal-servings label{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;}
+  .servings-input{width:64px;font-family:var(--font-mono);text-align:center;padding:6px;}
+  .meal-batch-total{color:var(--steel);font-size:11px;}
   .ingredient-list{display:flex;flex-direction:column;}
   .ingredient-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;}
   .ingredient-row:last-child{border-bottom:none;}
@@ -568,8 +573,22 @@
     }
     return {cal: m.cal||0, protein: m.protein||0, carbs: m.carbs||0, fat: m.fat||0};
   }
-  async function addSavedMeal(name, ingredients){
-    const { data, error } = await sb.from('saved_foods').insert({user_id: userId, name: name}).select().single();
+  function mealPerServing(m){
+    const t = mealTotals(m);
+    const servings = m.servings || 1;
+    return {cal: t.cal/servings, protein: t.protein/servings, carbs: t.carbs/servings, fat: t.fat/servings};
+  }
+  async function updateMealServings(mealId, servings){
+    const meal = savedMeals.find(function(m){ return m.id === mealId; });
+    if(!meal) return;
+    const prev = meal.servings;
+    meal.servings = servings;
+    renderMeals();
+    const { error } = await sb.from('saved_foods').update({servings: servings}).eq('id', mealId).eq('user_id', userId);
+    if(error){ meal.servings = prev; renderMeals(); showToast('Could not update servings — try again', true); }
+  }
+  async function addSavedMeal(name, ingredients, servings){
+    const { data, error } = await sb.from('saved_foods').insert({user_id: userId, name: name, servings: servings || 1}).select().single();
     if(error){ showToast('Could not save meal — try again', true); return; }
     const rows = ingredients.map(function(ing){
       return {meal_id: data.id, user_id: userId, name: ing.name, cal: ing.cal, protein: ing.protein, carbs: ing.carbs, fat: ing.fat};
@@ -609,8 +628,8 @@
   async function quickAddSavedMeal(id){
     const m = savedMeals.find(function(x){ return x.id === id; });
     if(!m) return;
-    const t = mealTotals(m);
-    await addFood({name: m.name, cal: t.cal, protein: t.protein, carbs: t.carbs, fat: t.fat});
+    const p = mealPerServing(m);
+    await addFood({name: m.name, cal: p.cal, protein: p.protein, carbs: p.carbs, fat: p.fat});
     showToast('Logged');
   }
   async function loadCalendarMonth(){
@@ -860,6 +879,8 @@
     const el = document.getElementById('mealsView');
     const rows = savedMeals.length ? savedMeals.map(function(m){
       const t = mealTotals(m);
+      const p = mealPerServing(m);
+      const servings = m.servings || 1;
       const ingHtml = (m.ingredients||[]).map(function(i){
         return '<div class="ingredient-row">' +
           '<span class="ingredient-name">' + escapeHtml(i.name) + '</span>' +
@@ -867,6 +888,10 @@
           '<button type="button" class="icon-btn" data-del-ingredient="' + i.id + '" data-meal-id="' + m.id + '" aria-label="Remove ingredient">×</button>' +
         '</div>';
       }).join('');
+      const servingsRow = '<div class="meal-servings">' +
+        '<label>Servings <input type="number" min="1" step="1" value="' + servings + '" data-servings-meal="' + m.id + '" class="num-input servings-input"></label>' +
+        (servings > 1 ? '<span class="mono meal-batch-total">Batch total: ' + fmt(t.cal) + ' kcal · P' + fmt(t.protein) + ' · C' + fmt(t.carbs) + ' · F' + fmt(t.fat) + '</span>' : '') +
+      '</div>';
       return '<div class="meal-card">' +
         '<div class="meal-card-head">' +
           '<span class="food-name">' + escapeHtml(m.name) + '</span>' +
@@ -875,7 +900,8 @@
             '<button type="button" class="icon-btn" data-del-saved="' + m.id + '" aria-label="Delete meal">×</button>' +
           '</div>' +
         '</div>' +
-        '<div class="meal-total mono">' + fmt(t.cal) + ' kcal · P' + fmt(t.protein) + ' · C' + fmt(t.carbs) + ' · F' + fmt(t.fat) + '</div>' +
+        '<div class="meal-total mono">' + fmt(p.cal) + ' kcal · P' + fmt(p.protein) + ' · C' + fmt(p.carbs) + ' · F' + fmt(p.fat) + ' <span class="meal-per-serving-label">per serving</span></div>' +
+        servingsRow +
         '<div class="ingredient-list">' + ingHtml + '</div>' +
         '<button type="button" class="link-btn" data-add-ingredient="' + m.id + '">+ Add ingredient</button>' +
       '</div>';
@@ -908,6 +934,7 @@
     if(!f) return;
     f.innerHTML =
       '<label class="modal-label">Meal name<input type="text" name="mealName" class="text-input" required></label>' +
+      '<label class="modal-label">Servings this batch makes<input type="number" name="servings" value="1" min="1" step="1" class="num-input" required></label>' +
       '<div id="ingredientBuilder" class="ingredient-builder"></div>' +
       '<button type="button" id="addIngredientRowBtn" class="ghost-btn">+ Add ingredient</button>' +
       '<button type="submit" class="primary-btn full">Save meal</button>';
@@ -933,10 +960,10 @@
     if(!matches.length){ box.hidden = true; box.innerHTML = ''; return; }
     box.hidden = false;
     box.innerHTML = matches.map(function(m){
-      const t = mealTotals(m);
+      const p = mealPerServing(m);
       return '<div class="meal-suggest-item" data-suggest-meal="' + m.id + '">' +
         '<div class="meal-suggest-name">' + escapeHtml(m.name) + '</div>' +
-        '<div class="meal-suggest-meta mono">' + fmt(t.cal) + ' kcal · P' + fmt(t.protein) + ' · C' + fmt(t.carbs) + ' · F' + fmt(t.fat) + '</div>' +
+        '<div class="meal-suggest-meta mono">' + fmt(p.cal) + ' kcal · P' + fmt(p.protein) + ' · C' + fmt(p.carbs) + ' · F' + fmt(p.fat) + ' /serving</div>' +
       '</div>';
     }).join('');
   }
@@ -1292,13 +1319,13 @@
     if(suggestItem){
       const m = savedMeals.find(function(x){ return x.id === suggestItem.dataset.suggestMeal; });
       if(m){
-        const t = mealTotals(m);
+        const p = mealPerServing(m);
         const form = document.getElementById('foodForm');
         form.name.value = m.name;
-        form.cal.value = Math.round(t.cal);
-        form.protein.value = Math.round(t.protein*10)/10;
-        form.carbs.value = Math.round(t.carbs*10)/10;
-        form.fat.value = Math.round(t.fat*10)/10;
+        form.cal.value = Math.round(p.cal);
+        form.protein.value = Math.round(p.protein*10)/10;
+        form.carbs.value = Math.round(p.carbs*10)/10;
+        form.fat.value = Math.round(p.fat*10)/10;
       }
       const box = document.getElementById('mealSuggestResults');
       if(box){ box.hidden = true; box.innerHTML = ''; }
@@ -1344,6 +1371,14 @@
       statsExercise = t.value || null;
       if(statsExercise) renderStatsExercise(statsExercise);
       else { const p = document.getElementById('statsExercisePanel'); if(p) p.innerHTML = ''; }
+    }
+  });
+
+  document.addEventListener('change', function(e){
+    const t = e.target;
+    if(t.matches('[data-servings-meal]')){
+      const servings = parseFloat(t.value) || 1;
+      updateMealServings(t.dataset.servingsMeal, servings);
     }
   });
 
@@ -1427,8 +1462,9 @@
             fat: parseFloat(ing.fat)||0
           };
         });
+      const servings = parseFloat(f.servings.value) || 1;
       if(!name || validIngredients.length===0){ showToast('Add a meal name and at least one ingredient', true); return; }
-      addSavedMeal(name, validIngredients);
+      addSavedMeal(name, validIngredients, servings);
       closeSavedMealModal();
       showToast('Meal saved');
       return;
