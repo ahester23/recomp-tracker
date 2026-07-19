@@ -108,6 +108,14 @@
   .food-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
   .food-grid .num-input{font-family:var(--font-mono);font-size:12px;padding:9px 6px;text-align:center;}
 
+  .food-search{position:relative;}
+  .food-search-results{position:absolute;left:0;right:0;top:100%;margin-top:4px;background:var(--panel-2);border:1px solid var(--line);border-radius:4px;max-height:220px;overflow-y:auto;z-index:5;}
+  .food-search-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line);}
+  .food-search-item:last-child{border-bottom:none;}
+  .food-search-item:hover{background:var(--panel);}
+  .food-search-name{font-size:13px;font-weight:500;}
+  .food-search-meta{font-size:11px;color:var(--steel);margin-top:2px;}
+
   .food-list{display:flex;flex-direction:column;gap:6px;}
   .food-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel-2);border-radius:4px;padding:10px 12px;gap:10px;}
   .food-main{display:flex;flex-direction:column;gap:3px;min-width:0;}
@@ -167,6 +175,32 @@
   .trend.down{color:var(--plate-red);}
   .trend.flat{color:var(--steel);}
 
+  /* Calendar */
+  .cal-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px;}
+  .cal-nav button{background:none;border:1px solid var(--line);color:var(--chalk);width:30px;height:30px;border-radius:3px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .cal-nav button:hover{border-color:var(--steel);}
+  #calMonthLabel{font-family:var(--font-mono);font-size:13px;letter-spacing:1px;min-width:130px;text-align:center;text-transform:uppercase;}
+  .cal-legend{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;font-size:11px;color:var(--steel);}
+  .cal-legend-item{display:flex;align-items:center;gap:5px;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:18px;}
+  .cal-dow{font-family:var(--font-mono);font-size:10px;color:var(--steel);text-align:center;padding-bottom:4px;text-transform:uppercase;}
+  .cal-cell{aspect-ratio:1;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:4px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;cursor:pointer;}
+  .cal-cell:hover{border-color:var(--steel);}
+  .cal-cell.empty-cell{visibility:hidden;cursor:default;}
+  .cal-cell.today{border-color:var(--plate-gold);}
+  .cal-cell.selected{background:var(--panel-2);border-color:var(--chalk);}
+  .cal-day-num{font-family:var(--font-mono);font-size:12px;}
+  .cal-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .cal-cell .cal-dot{margin-top:1px;}
+  .cal-cell-total{font-family:var(--font-mono);font-size:9px;color:var(--steel);}
+  .cal-detail{background:var(--panel);border-radius:6px;padding:16px;border:1px solid var(--line);}
+  .cal-detail-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .cal-detail-head h3{margin:0;font-size:16px;font-weight:600;}
+  .cal-detail-split{font-size:12px;color:var(--steel);margin-bottom:12px;}
+  .cal-detail-macros{margin-bottom:14px;font-size:12.5px;}
+  .cal-exercise-row{font-size:12.5px;margin-bottom:6px;}
+  .cal-exercise-row .mono{color:var(--steel);}
+
   #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel-2);border:1px solid var(--line);color:var(--chalk);padding:9px 16px;border-radius:5px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease;z-index:100;}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   #toast.error{border-color:var(--plate-red);color:var(--plate-red);}
@@ -211,11 +245,13 @@
     <nav class="tabs">
       <button class="tab active" data-tab="macros">Macros</button>
       <button class="tab" data-tab="training">Training</button>
+      <button class="tab" data-tab="calendar">Calendar</button>
     </nav>
   </header>
   <main>
     <section id="macrosView"><p class="empty">Loading…</p></section>
     <section id="trainingView" hidden><p class="empty">Loading…</p></section>
+    <section id="calendarView" hidden><p class="empty">Loading…</p></section>
   </main>
 </div>
 <div id="targetsModal" class="modal" hidden>
@@ -236,6 +272,13 @@
 
   const DAY_LABELS = ['Back & Biceps','Legs & Glutes','Shoulders','Legs & Glutes','Abs','Legs & Glutes'];
   const DAY_SHORT  = ['Back/Bi','Legs','Shoulders','Legs','Abs','Legs'];
+  const DAY_COLOR  = ['plate-red','plate-blue','plate-gold','plate-blue','plate-green','plate-blue'];
+  const CAL_LEGEND = [
+    {label:'Back & Biceps', color:'plate-red'},
+    {label:'Legs & Glutes', color:'plate-blue'},
+    {label:'Shoulders', color:'plate-gold'},
+    {label:'Abs', color:'plate-green'}
+  ];
 
   let userId = null;
   let authMode = 'signin';
@@ -247,6 +290,12 @@
   let lastDayIndex = -1;
   let exerciseIndex = [];
   let pendingSets = [{weight:'',reps:''}];
+  let calMonthDate = startOfMonth(currentDate);
+  let calSelectedKey = null;
+  let calData = {};
+  let calInitialized = false;
+  let foodSearchResults = [];
+  let foodSearchTimer = null;
 
   // ---------- date helpers ----------
   function startOfDay(d){ const x = new Date(d); x.setHours(0,0,0,0); return x; }
@@ -259,6 +308,8 @@
     const d = typeof dateLike === 'string' ? new Date(dateLike + 'T00:00:00') : dateLike;
     return d.toLocaleDateString(undefined, {weekday:'short', month:'short', day:'numeric'});
   }
+  function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function daysInMonth(y, m){ return new Date(y, m+1, 0).getDate(); }
 
   // ---------- misc helpers ----------
   function fmt(n){ return Math.round(n||0).toLocaleString(); }
@@ -422,6 +473,42 @@
     });
     renderProgressPanel(name, entries);
   }
+  async function loadCalendarMonth(){
+    const y = calMonthDate.getFullYear(), m = calMonthDate.getMonth();
+    const startKey = formatKey(new Date(y, m, 1));
+    const endKey = formatKey(new Date(y, m, daysInMonth(y, m)));
+    const [foodRes, workoutRes, exRes] = await Promise.all([
+      sb.from('food_entries').select('day,cal').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
+      sb.from('workout_days').select('day,day_index').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
+      sb.from('exercises').select('day,name,sets').eq('user_id', userId).gte('day', startKey).lte('day', endKey).order('created_at', {ascending:true})
+    ]);
+    const data = {};
+    function bucket(key){
+      if(!data[key]) data[key] = {cal:0, dayIndex:null, exercises:[]};
+      return data[key];
+    }
+    (foodRes.data||[]).forEach(function(r){ bucket(r.day).cal += (r.cal||0); });
+    (workoutRes.data||[]).forEach(function(r){ bucket(r.day).dayIndex = r.day_index; });
+    (exRes.data||[]).forEach(function(r){ bucket(r.day).exercises.push({name:r.name, sets:r.sets}); });
+    calData = data;
+  }
+  async function changeCalMonth(delta){
+    calMonthDate = new Date(calMonthDate.getFullYear(), calMonthDate.getMonth()+delta, 1);
+    calSelectedKey = null;
+    await loadCalendarMonth();
+    renderCalendar();
+  }
+  function selectCalDay(key){
+    calSelectedKey = key;
+    renderCalendar();
+  }
+  async function gotoCalDay(){
+    if(!calSelectedKey) return;
+    currentDate = new Date(calSelectedKey + 'T00:00:00');
+    activeTab = 'macros';
+    await loadDateData();
+    render();
+  }
 
   // ---------- rendering: header ----------
   function renderHeader(){
@@ -482,6 +569,10 @@
       '</div>' +
       '<button id="editTargetsBtn" class="ghost-btn targets-btn">Edit targets</button>' +
       '<form id="foodForm" class="food-form">' +
+        '<div class="food-search">' +
+          '<input type="text" id="foodSearchInput" placeholder="Search prepackaged foods (optional)" class="text-input" autocomplete="off">' +
+          '<div id="foodSearchResults" class="food-search-results" hidden></div>' +
+        '</div>' +
         '<input type="text" name="name" placeholder="Food (e.g., Greek yogurt + berries)" class="text-input" required>' +
         '<div class="food-grid">' +
           '<input type="number" name="cal" placeholder="kcal" min="0" step="1" class="num-input" required>' +
@@ -502,6 +593,49 @@
       '<label class="modal-label">Carbs (g)<input type="number" name="carbs" value="' + targets.carbs + '" class="num-input" min="0"></label>' +
       '<label class="modal-label">Fat (g)<input type="number" name="fat" value="' + targets.fat + '" class="num-input" min="0"></label>' +
       '<button type="submit" class="primary-btn full">Save targets</button>';
+  }
+  function renderFoodSearchResults(){
+    const box = document.getElementById('foodSearchResults');
+    if(!box) return;
+    if(!foodSearchResults.length){
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    box.hidden = false;
+    box.innerHTML = foodSearchResults.map(function(r, i){
+      return '<div class="food-search-item" data-search-result="' + i + '">' +
+        '<div class="food-search-name">' + escapeHtml(r.name) + '</div>' +
+        '<div class="food-search-meta mono">' + fmt(r.cal) + ' kcal · P' + fmt(r.protein) + ' · C' + fmt(r.carbs) + ' · F' + fmt(r.fat) + ' (' + escapeHtml(r.basis) + ')</div>' +
+      '</div>';
+    }).join('');
+  }
+  async function searchFoods(query){
+    try{
+      const url = 'https://world.openfoodfacts.org/cgi/search.pl?search_terms=' + encodeURIComponent(query) + '&search_simple=1&action=process&json=1&page_size=8';
+      const res = await fetch(url);
+      const json = await res.json();
+      const products = json.products || [];
+      foodSearchResults = products.map(function(p){
+        const n = p.nutriments || {};
+        const hasServing = n['energy-kcal_serving'] !== undefined;
+        const cal = hasServing ? n['energy-kcal_serving'] : n['energy-kcal_100g'];
+        const protein = hasServing ? n['proteins_serving'] : n['proteins_100g'];
+        const carbs = hasServing ? n['carbohydrates_serving'] : n['carbohydrates_100g'];
+        const fat = hasServing ? n['fat_serving'] : n['fat_100g'];
+        const label = p.product_name || p.generic_name;
+        if(!label || cal === undefined || cal === null) return null;
+        return {
+          name: label + (p.brands ? ' (' + p.brands.split(',')[0].trim() + ')' : ''),
+          cal: cal || 0, protein: protein || 0, carbs: carbs || 0, fat: fat || 0,
+          basis: hasServing ? ('per ' + (p.serving_size || 'serving')) : 'per 100g'
+        };
+      }).filter(Boolean).slice(0, 8);
+      renderFoodSearchResults();
+    }catch(e){
+      foodSearchResults = [];
+      renderFoodSearchResults();
+    }
   }
 
   // ---------- rendering: training ----------
@@ -618,24 +752,88 @@
       '<table class="progress-table"><thead><tr><th>Date</th><th>Sets</th><th>Top</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
+  // ---------- rendering: calendar ----------
+  function calDetailHtml(){
+    if(!calSelectedKey){
+      return '<p class="empty">Tap a day to see what was logged.</p>';
+    }
+    const info = calData[calSelectedKey] || {cal:0, dayIndex:null, exercises:[]};
+    const splitLabel = (info.dayIndex === null || info.dayIndex === undefined) ? 'No split assigned' : DAY_LABELS[info.dayIndex];
+    const exHtml = info.exercises.length ? info.exercises.map(function(ex){
+      const setsStr = ex.sets.map(function(s){ return s.weight + '×' + s.reps; }).join('  ·  ');
+      return '<div class="cal-exercise-row"><strong>' + escapeHtml(ex.name) + '</strong> <span class="mono">' + setsStr + '</span></div>';
+    }).join('') : '<p class="empty">No exercises logged.</p>';
+    return '<div class="cal-detail">' +
+      '<div class="cal-detail-head"><h3>' + escapeHtml(formatShort(calSelectedKey)) + '</h3><button type="button" id="calGotoDay" class="link-btn">Open day →</button></div>' +
+      '<div class="cal-detail-split">' + escapeHtml(splitLabel) + '</div>' +
+      '<div class="cal-detail-macros mono">' + fmt(info.cal) + ' kcal logged</div>' +
+      exHtml +
+    '</div>';
+  }
+  function renderCalendar(){
+    const el = document.getElementById('calendarView');
+    const y = calMonthDate.getFullYear(), m = calMonthDate.getMonth();
+    const monthLabel = calMonthDate.toLocaleDateString(undefined, {month:'long', year:'numeric'});
+    const firstDow = new Date(y, m, 1).getDay();
+    const totalDays = daysInMonth(y, m);
+    const todayKey = formatKey(startOfDay(new Date()));
+
+    let cells = '';
+    for(let i=0; i<firstDow; i++){
+      cells += '<div class="cal-cell empty-cell"></div>';
+    }
+    for(let d=1; d<=totalDays; d++){
+      const key = formatKey(new Date(y, m, d));
+      const info = calData[key];
+      const classes = ['cal-cell'];
+      if(key === todayKey) classes.push('today');
+      if(key === calSelectedKey) classes.push('selected');
+      const dot = (info && info.dayIndex !== null && info.dayIndex !== undefined)
+        ? '<span class="cal-dot" style="background:var(--' + DAY_COLOR[info.dayIndex] + ')"></span>' : '';
+      const calTotal = (info && info.cal) ? '<span class="cal-cell-total mono">' + fmt(info.cal) + '</span>' : '';
+      cells += '<div class="' + classes.join(' ') + '" data-cal-day="' + key + '">' +
+        '<span class="cal-day-num">' + d + '</span>' + dot + calTotal +
+      '</div>';
+    }
+
+    const dowHtml = ['S','M','T','W','T','F','S'].map(function(d){ return '<div class="cal-dow">' + d + '</div>'; }).join('');
+    const legendHtml = '<div class="cal-legend">' + CAL_LEGEND.map(function(l){
+      return '<span class="cal-legend-item"><span class="cal-dot" style="background:var(--' + l.color + ')"></span>' + l.label + '</span>';
+    }).join('') + '</div>';
+
+    el.innerHTML =
+      '<div class="cal-nav">' +
+        '<button type="button" id="calPrevMonth" aria-label="Previous month">‹</button>' +
+        '<span id="calMonthLabel">' + monthLabel + '</span>' +
+        '<button type="button" id="calNextMonth" aria-label="Next month">›</button>' +
+      '</div>' +
+      legendHtml +
+      '<div class="cal-grid">' + dowHtml + cells + '</div>' +
+      '<div id="calDetail">' + calDetailHtml() + '</div>';
+  }
+
   // ---------- top-level render / nav ----------
-  function render(){
-    renderHeader();
-    renderMacros();
-    renderTraining();
+  function applyTabVisibility(){
     document.getElementById('macrosView').hidden = activeTab !== 'macros';
     document.getElementById('trainingView').hidden = activeTab !== 'training';
+    document.getElementById('calendarView').hidden = activeTab !== 'calendar';
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
       b.classList.toggle('active', b.dataset.tab === activeTab);
     });
   }
+  function render(){
+    renderHeader();
+    renderMacros();
+    renderTraining();
+    applyTabVisibility();
+  }
   function switchTab(tab){
     activeTab = tab;
-    document.getElementById('macrosView').hidden = activeTab !== 'macros';
-    document.getElementById('trainingView').hidden = activeTab !== 'training';
-    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
-      b.classList.toggle('active', b.dataset.tab === activeTab);
-    });
+    applyTabVisibility();
+    if(tab === 'calendar'){
+      if(!calInitialized){ calMonthDate = startOfMonth(currentDate); calInitialized = true; }
+      loadCalendarMonth().then(renderCalendar);
+    }
   }
   async function changeDate(delta){
     currentDate = new Date(currentDate.getTime() + delta*86400000);
@@ -696,8 +894,37 @@
     if(e.target.closest('#signOutBtn')){ sb.auth.signOut(); return; }
     if(e.target.closest('#authToggle')){ setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); return; }
 
+    const calDayBtn = e.target.closest('[data-cal-day]');
+    if(calDayBtn){ selectCalDay(calDayBtn.dataset.calDay); return; }
+    if(e.target.closest('#calPrevMonth')){ changeCalMonth(-1); return; }
+    if(e.target.closest('#calNextMonth')){ changeCalMonth(1); return; }
+    if(e.target.closest('#calGotoDay')){ gotoCalDay(); return; }
+
+    const searchItem = e.target.closest('[data-search-result]');
+    if(searchItem){
+      const idx = parseInt(searchItem.dataset.searchResult, 10);
+      const r = foodSearchResults[idx];
+      if(r){
+        const form = document.getElementById('foodForm');
+        form.name.value = r.name;
+        form.cal.value = Math.round(r.cal);
+        form.protein.value = Math.round(r.protein*10)/10;
+        form.carbs.value = Math.round(r.carbs*10)/10;
+        form.fat.value = Math.round(r.fat*10)/10;
+        document.getElementById('foodSearchInput').value = '';
+      }
+      foodSearchResults = [];
+      renderFoodSearchResults();
+      return;
+    }
+
     const tabBtn = e.target.closest('.tab');
     if(tabBtn){ switchTab(tabBtn.dataset.tab); return; }
+
+    if(!e.target.closest('.food-search') && foodSearchResults.length){
+      foodSearchResults = [];
+      renderFoodSearchResults();
+    }
   });
 
   document.addEventListener('input', function(e){
@@ -706,6 +933,12 @@
       const idx = parseInt(t.dataset.setIndex,10);
       const field = t.dataset.setField;
       pendingSets[idx][field] = t.value === '' ? '' : parseFloat(t.value);
+    }
+    if(t.id === 'foodSearchInput'){
+      clearTimeout(foodSearchTimer);
+      const q = t.value.trim();
+      if(q.length < 2){ foodSearchResults = []; renderFoodSearchResults(); return; }
+      foodSearchTimer = setTimeout(function(){ searchFoods(q); }, 400);
     }
   });
 
