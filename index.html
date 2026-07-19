@@ -724,8 +724,8 @@
         btn.disabled = false;
         if(res.error){ setAuthMsg(res.error.message, true); return; }
         if(authMode === 'signup' && !res.data.session){
-          setAuthMsg('Check your email to confirm your account, then sign in.');
           setAuthMode('signin');
+          setAuthMsg('Check your email to confirm your account, then sign in.');
           return;
         }
         if(res.data.session){ onSignedIn(res.data.session.user); }
