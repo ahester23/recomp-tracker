@@ -247,18 +247,26 @@
       <button class="tab active" data-tab="macros">Macros</button>
       <button class="tab" data-tab="training">Training</button>
       <button class="tab" data-tab="calendar">Calendar</button>
+      <button class="tab" data-tab="meals">Meals</button>
     </nav>
   </header>
   <main>
     <section id="macrosView"><p class="empty">Loading…</p></section>
     <section id="trainingView" hidden><p class="empty">Loading…</p></section>
     <section id="calendarView" hidden><p class="empty">Loading…</p></section>
+    <section id="mealsView" hidden><p class="empty">Loading…</p></section>
   </main>
 </div>
 <div id="targetsModal" class="modal" hidden>
   <div class="modal-card">
     <div class="progress-head"><h3>Edit daily targets</h3><button type="button" id="closeTargets" class="icon-btn" aria-label="Close">×</button></div>
     <form id="targetsForm"></form>
+  </div>
+</div>
+<div id="savedMealModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="progress-head"><h3>New saved meal</h3><button type="button" id="closeSavedMeal" class="icon-btn" aria-label="Close">×</button></div>
+    <form id="savedMealForm"></form>
   </div>
 </div>
 <div id="toast"></div>
@@ -486,14 +494,14 @@
     if(error){ showToast('Could not save meal — try again', true); return; }
     savedMeals.push(data);
     savedMeals.sort(function(a,b){ return a.name.localeCompare(b.name); });
-    renderMacros();
+    if(activeTab === 'meals') renderMeals();
   }
   async function deleteSavedMeal(id){
     const prev = savedMeals;
     savedMeals = savedMeals.filter(function(m){ return m.id !== id; });
-    renderMacros();
+    renderMeals();
     const { error } = await sb.from('saved_foods').delete().eq('id', id).eq('user_id', userId);
-    if(error){ savedMeals = prev; renderMacros(); showToast('Could not delete — try again', true); }
+    if(error){ savedMeals = prev; renderMeals(); showToast('Could not delete — try again', true); }
   }
   async function quickAddSavedMeal(id){
     const m = savedMeals.find(function(x){ return x.id === id; });
@@ -596,7 +604,6 @@
         '</div>' +
       '</div>' +
       '<button id="editTargetsBtn" class="ghost-btn targets-btn">Edit targets</button>' +
-      savedMealsHtml() +
       '<form id="foodForm" class="food-form">' +
         '<input type="text" name="name" placeholder="Food (e.g., Greek yogurt + berries)" class="text-input" required>' +
         '<div class="food-grid">' +
@@ -610,7 +617,8 @@
       '</form>' +
       '<div class="food-list">' + listHtml + '</div>';
   }
-  function savedMealsHtml(){
+  function renderMeals(){
+    const el = document.getElementById('mealsView');
     const rows = savedMeals.length ? savedMeals.map(function(m){
       return '<div class="saved-meal-row">' +
         '<div class="food-main">' +
@@ -618,15 +626,25 @@
           '<span class="food-macros mono">' + fmt(m.cal) + ' kcal · P' + fmt(m.protein) + ' · C' + fmt(m.carbs) + ' · F' + fmt(m.fat) + '</span>' +
         '</div>' +
         '<div class="saved-meal-actions">' +
-          '<button type="button" class="ghost-btn" data-quick-add="' + m.id + '">+ Add</button>' +
+          '<button type="button" class="ghost-btn" data-quick-add="' + m.id + '">+ Add to today</button>' +
           '<button type="button" class="icon-btn" data-del-saved="' + m.id + '" aria-label="Delete saved meal">×</button>' +
         '</div>' +
       '</div>';
-    }).join('') : '<p class="empty">No saved meals yet — check "Save as a reusable meal" below when logging one you\'ll repeat.</p>';
-    return '<div class="saved-meals">' +
-      '<div class="saved-meals-head"><span>Saved meals</span></div>' +
-      '<div class="saved-meal-list">' + rows + '</div>' +
-    '</div>';
+    }).join('') : '<p class="empty">No saved meals yet — tap "New meal" to add one you\'ll reuse.</p>';
+    el.innerHTML =
+      '<div class="saved-meals-head"><span>Your meals</span><button type="button" id="addSavedMealBtn" class="link-btn">+ New meal</button></div>' +
+      '<div class="saved-meal-list">' + rows + '</div>';
+  }
+  function renderSavedMealForm(){
+    const f = document.getElementById('savedMealForm');
+    if(!f) return;
+    f.innerHTML =
+      '<label class="modal-label">Name<input type="text" name="name" class="text-input" required></label>' +
+      '<label class="modal-label">Calories<input type="number" name="cal" class="num-input" min="0" step="1" required></label>' +
+      '<label class="modal-label">Protein (g)<input type="number" name="protein" class="num-input" min="0" step="0.5" required></label>' +
+      '<label class="modal-label">Carbs (g)<input type="number" name="carbs" class="num-input" min="0" step="0.5" required></label>' +
+      '<label class="modal-label">Fat (g)<input type="number" name="fat" class="num-input" min="0" step="0.5" required></label>' +
+      '<button type="submit" class="primary-btn full">Save meal</button>';
   }
   function renderTargetsForm(){
     const f = document.getElementById('targetsForm');
@@ -818,6 +836,7 @@
     document.getElementById('macrosView').hidden = activeTab !== 'macros';
     document.getElementById('trainingView').hidden = activeTab !== 'training';
     document.getElementById('calendarView').hidden = activeTab !== 'calendar';
+    document.getElementById('mealsView').hidden = activeTab !== 'meals';
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
       b.classList.toggle('active', b.dataset.tab === activeTab);
     });
@@ -835,6 +854,7 @@
       if(!calInitialized){ calMonthDate = startOfMonth(currentDate); calInitialized = true; }
       loadCalendarMonth().then(renderCalendar);
     }
+    if(tab === 'meals'){ renderMeals(); }
   }
   async function changeDate(delta){
     currentDate = new Date(currentDate.getTime() + delta*86400000);
@@ -853,6 +873,15 @@
   }
   function closeTargetsModal(){
     const m = document.getElementById('targetsModal');
+    if(m) m.hidden = true;
+  }
+  function openSavedMealModal(){
+    renderSavedMealForm();
+    const m = document.getElementById('savedMealModal');
+    if(m) m.hidden = false;
+  }
+  function closeSavedMealModal(){
+    const m = document.getElementById('savedMealModal');
     if(m) m.hidden = true;
   }
   function addPendingSetRow(){
@@ -905,6 +934,8 @@
     if(quickAddBtn){ quickAddSavedMeal(quickAddBtn.dataset.quickAdd); return; }
     const delSavedBtn = e.target.closest('[data-del-saved]');
     if(delSavedBtn){ deleteSavedMeal(delSavedBtn.dataset.delSaved); return; }
+    if(e.target.closest('#addSavedMealBtn')){ openSavedMealModal(); return; }
+    if(e.target.closest('#closeSavedMeal')){ closeSavedMealModal(); return; }
 
     const tabBtn = e.target.closest('.tab');
     if(tabBtn){ switchTab(tabBtn.dataset.tab); return; }
@@ -982,6 +1013,22 @@
       closeTargetsModal();
       renderMacros();
       showToast('Targets updated');
+      return;
+    }
+    if(e.target.id === 'savedMealForm'){
+      e.preventDefault();
+      const f = e.target;
+      const name = f.name.value.trim();
+      if(!name){ showToast('Add a meal name', true); return; }
+      addSavedMeal({
+        name: name,
+        cal: parseFloat(f.cal.value)||0,
+        protein: parseFloat(f.protein.value)||0,
+        carbs: parseFloat(f.carbs.value)||0,
+        fat: parseFloat(f.fat.value)||0
+      }).then(function(){ renderMeals(); });
+      closeSavedMealModal();
+      showToast('Meal saved');
       return;
     }
     if(e.target.id === 'exerciseForm'){
