@@ -573,10 +573,9 @@
       '<button id="editTargetsBtn" class="ghost-btn targets-btn">Edit targets</button>' +
       '<form id="foodForm" class="food-form">' +
         '<div class="food-search">' +
-          '<input type="text" id="foodSearchInput" placeholder="Search prepackaged foods (optional)" class="text-input" autocomplete="off">' +
+          '<input type="text" name="name" id="foodNameInput" placeholder="Food — search prepackaged items or type your own" class="text-input" required autocomplete="off">' +
           '<div id="foodSearchResults" class="food-search-results" hidden></div>' +
         '</div>' +
-        '<input type="text" name="name" placeholder="Food (e.g., Greek yogurt + berries)" class="text-input" required>' +
         '<div class="food-grid">' +
           '<input type="number" name="cal" placeholder="kcal" min="0" step="1" class="num-input" required>' +
           '<input type="number" name="protein" placeholder="protein g" min="0" step="0.5" class="num-input" required>' +
@@ -931,7 +930,6 @@
         form.protein.value = Math.round(r.protein*10)/10;
         form.carbs.value = Math.round(r.carbs*10)/10;
         form.fat.value = Math.round(r.fat*10)/10;
-        document.getElementById('foodSearchInput').value = '';
       }
       foodSearchResults = [];
       renderFoodSearchResults();
@@ -954,7 +952,7 @@
       const field = t.dataset.setField;
       pendingSets[idx][field] = t.value === '' ? '' : parseFloat(t.value);
     }
-    if(t.id === 'foodSearchInput'){
+    if(t.id === 'foodNameInput'){
       clearTimeout(foodSearchTimer);
       const q = t.value.trim();
       if(q.length < 2){ foodSearchResults = []; foodSearchError = null; foodSearchLoading = false; renderFoodSearchResults(); return; }
