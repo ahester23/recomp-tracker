@@ -198,6 +198,7 @@
 
   .progress-panel{background:var(--panel);border-radius:6px;padding:16px;margin-top:6px;border:1px solid var(--line);}
   .sparkline{width:100%;height:auto;display:block;margin-bottom:10px;}
+  .table-scroll{overflow-x:auto;}
   .progress-table{width:100%;border-collapse:collapse;font-size:12px;}
   .progress-table th{text-align:left;color:var(--steel);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:4px 6px;border-bottom:1px solid var(--line);}
   .progress-table td{padding:6px;border-bottom:1px solid var(--line);}
@@ -232,6 +233,17 @@
   .cal-detail-macros{margin-bottom:14px;font-size:12.5px;}
   .cal-exercise-row{font-size:12.5px;margin-bottom:6px;}
   .cal-exercise-row .mono{color:var(--steel);}
+
+  /* Stats */
+  .stats-range{display:flex;gap:8px;margin-bottom:18px;}
+  .stats-range button{flex:1;background:none;border:1px solid var(--line);color:var(--steel);font-family:var(--font-body);font-weight:600;font-size:12px;letter-spacing:.5px;padding:8px 0;border-radius:3px;cursor:pointer;}
+  .stats-range button.active{color:var(--chalk);border-color:var(--plate-gold);}
+  .stats-section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin-bottom:14px;}
+  .stats-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+  .stats-section-head h3{margin:0;font-size:14px;font-weight:600;}
+  .stats-section-head span{color:var(--steel);font-size:11.5px;}
+  .stats-exercise-panel{margin-top:12px;}
+  #statsExerciseSelect{margin-top:2px;}
 
   #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel-2);border:1px solid var(--line);color:var(--chalk);padding:9px 16px;border-radius:5px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease;z-index:100;}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
@@ -274,6 +286,8 @@
         <button type="button" class="menu-item" data-page="daily">Daily Tracker</button>
         <button type="button" class="menu-item" data-page="calendar">Calendar</button>
         <button type="button" class="menu-item" data-page="meals">Saved Meals</button>
+        <button type="button" class="menu-item" data-page="stats">Stats</button>
+        <button type="button" class="menu-item" data-page="body">Body Stats</button>
       </div>
     </div>
     <div class="date-nav" id="dateNav">
@@ -292,6 +306,8 @@
     <section id="trainingView" hidden><p class="empty">Loading…</p></section>
     <section id="calendarView" hidden><p class="empty">Loading…</p></section>
     <section id="mealsView" hidden><p class="empty">Loading…</p></section>
+    <section id="statsView" hidden><p class="empty">Loading…</p></section>
+    <section id="bodyView" hidden><p class="empty">Loading…</p></section>
   </main>
 </div>
 <div id="targetsModal" class="modal" hidden>
@@ -352,6 +368,10 @@
   let savedMeals = [];
   let pendingIngredients = [{name:'',cal:'',protein:'',carbs:'',fat:''}];
   let addIngredientMealId = null;
+  let statsDays = 30;
+  let statsData = null;
+  let statsExercise = null;
+  let bodyEntries = [];
 
   // ---------- date helpers ----------
   function startOfDay(d){ const x = new Date(d); x.setHours(0,0,0,0); return x; }
@@ -521,13 +541,7 @@
     const panel = document.getElementById('progressPanel');
     if(panel) panel.hidden = false;
     renderProgressPanel(name, null, true);
-    const { data, error } = await sb.from('exercises').select('day,sets').eq('user_id', userId).eq('name', name).order('day', {ascending:true});
-    if(error){ renderProgressPanel(name, []); return; }
-    const entries = (data||[]).map(function(r){
-      let topWeight = 0;
-      (r.sets||[]).forEach(function(s){ if(s.weight > topWeight) topWeight = s.weight; });
-      return {date: r.day, sets: r.sets, topWeight: topWeight};
-    });
+    const entries = await loadExerciseHistory(name);
     renderProgressPanel(name, entries);
   }
   async function loadSavedMeals(){
@@ -635,6 +649,137 @@
     currentPage = 'daily';
     await loadDateData();
     render();
+  }
+
+  // ---------- stats ----------
+  async function loadStatsCalories(){
+    const end = startOfDay(new Date());
+    const start = new Date(end.getTime() - (statsDays-1)*86400000);
+    const startKey = formatKey(start), endKey = formatKey(end);
+    const { data, error } = await sb.from('food_entries').select('day,cal,protein,carbs,fat').eq('user_id', userId).gte('day', startKey).lte('day', endKey);
+    const byDay = {};
+    (data||[]).forEach(function(r){
+      if(!byDay[r.day]) byDay[r.day] = {cal:0, protein:0, carbs:0, fat:0};
+      byDay[r.day].cal += r.cal||0; byDay[r.day].protein += r.protein||0; byDay[r.day].carbs += r.carbs||0; byDay[r.day].fat += r.fat||0;
+    });
+    const days = [];
+    for(let i=0;i<statsDays;i++){ days.push(formatKey(new Date(start.getTime() + i*86400000))); }
+    statsData = {
+      days: days,
+      cal: days.map(function(k){ return byDay[k] ? byDay[k].cal : 0; }),
+      protein: days.map(function(k){ return byDay[k] ? byDay[k].protein : 0; }),
+      carbs: days.map(function(k){ return byDay[k] ? byDay[k].carbs : 0; }),
+      fat: days.map(function(k){ return byDay[k] ? byDay[k].fat : 0; })
+    };
+  }
+  function statsAvg(values){
+    const nonzeroOrAll = values;
+    if(!nonzeroOrAll.length) return 0;
+    return nonzeroOrAll.reduce(function(a,b){ return a+b; }, 0) / nonzeroOrAll.length;
+  }
+  function statChartHtml(title, values, color){
+    return '<div class="stats-section">' +
+      '<div class="stats-section-head"><h3>' + escapeHtml(title) + '</h3><span class="mono">avg ' + fmt(statsAvg(values)) + '</span></div>' +
+      renderSparkline(values, {color: color, dots:false, emptyMsg:'Not enough data yet'}) +
+    '</div>';
+  }
+  async function renderStats(){
+    const el = document.getElementById('statsView');
+    el.innerHTML = '<p class="empty">Loading…</p>';
+    await loadStatsCalories();
+    const rangeHtml = '<div class="stats-range">' +
+      [7,30,90].map(function(d){
+        return '<button type="button" class="' + (statsDays===d?'active':'') + '" data-stats-range="' + d + '">' + d + 'D</button>';
+      }).join('') +
+    '</div>';
+    const exerciseOptions = exerciseIndex.length ?
+      '<option value="">Choose an exercise…</option>' + exerciseIndex.map(function(n){
+        return '<option value="' + escapeHtml(n) + '"' + (n===statsExercise?' selected':'') + '>' + escapeHtml(n) + '</option>';
+      }).join('') :
+      '<option value="">No exercises logged yet</option>';
+    el.innerHTML =
+      rangeHtml +
+      statChartHtml('Calories', statsData.cal, 'var(--plate-green)') +
+      statChartHtml('Protein', statsData.protein, 'var(--plate-red)') +
+      statChartHtml('Carbs', statsData.carbs, 'var(--plate-gold)') +
+      statChartHtml('Fat', statsData.fat, 'var(--plate-blue)') +
+      '<div class="stats-section">' +
+        '<div class="stats-section-head"><h3>Exercise weight</h3></div>' +
+        '<select id="statsExerciseSelect" class="text-input">' + exerciseOptions + '</select>' +
+        '<div id="statsExercisePanel" class="stats-exercise-panel"></div>' +
+      '</div>';
+    if(statsExercise){ renderStatsExercise(statsExercise); }
+  }
+  async function renderStatsExercise(name){
+    const panel = document.getElementById('statsExercisePanel');
+    if(panel) panel.innerHTML = '<p class="empty">Loading…</p>';
+    const entries = await loadExerciseHistory(name);
+    if(panel) panel.innerHTML = exerciseHistoryBodyHtml(name, entries);
+  }
+
+  // ---------- body stats ----------
+  async function loadBodyStats(){
+    const { data, error } = await sb.from('body_stats').select('*').eq('user_id', userId).order('day', {ascending:true});
+    if(error){ bodyEntries = []; return; }
+    bodyEntries = data || [];
+  }
+  async function saveBodyStat(entry){
+    const { data, error } = await sb.from('body_stats').upsert({
+      user_id: userId, day: entry.day, weight: entry.weight, body_fat_pct: entry.bodyFatPct, bmi: entry.bmi, muscle_mass: entry.muscleMass
+    }, {onConflict:'user_id,day'}).select().single();
+    if(error){ showToast('Could not save — try again', true); return; }
+    bodyEntries = bodyEntries.filter(function(e){ return e.day !== data.day; });
+    bodyEntries.push(data);
+    bodyEntries.sort(function(a,b){ return a.day.localeCompare(b.day); });
+    renderBody();
+    showToast('Saved');
+  }
+  async function deleteBodyStat(id){
+    const prev = bodyEntries;
+    bodyEntries = bodyEntries.filter(function(e){ return e.id !== id; });
+    renderBody();
+    const { error } = await sb.from('body_stats').delete().eq('id', id).eq('user_id', userId);
+    if(error){ bodyEntries = prev; renderBody(); showToast('Could not delete — try again', true); }
+  }
+  function bodyHistoryTableHtml(){
+    if(!bodyEntries.length) return '<p class="empty">No entries yet — log your first weigh-in above.</p>';
+    const reversed = bodyEntries.slice().reverse();
+    const rows = reversed.map(function(e){
+      return '<tr>' +
+        '<td>' + formatShort(e.day) + '</td>' +
+        '<td class="mono">' + (e.weight!=null ? fmt(e.weight) : '–') + '</td>' +
+        '<td class="mono">' + (e.body_fat_pct!=null ? fmt(e.body_fat_pct)+'%' : '–') + '</td>' +
+        '<td class="mono">' + (e.bmi!=null ? fmt(e.bmi) : '–') + '</td>' +
+        '<td class="mono">' + (e.muscle_mass!=null ? fmt(e.muscle_mass) : '–') + '</td>' +
+        '<td><button type="button" class="icon-btn" data-del-body="' + e.id + '" aria-label="Delete entry">×</button></td>' +
+      '</tr>';
+    }).join('');
+    return '<div class="table-scroll"><table class="progress-table"><thead><tr><th>Date</th><th>Wt</th><th>BF%</th><th>BMI</th><th>Muscle</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  function renderBodyForm(){
+    const today = formatKey(startOfDay(new Date()));
+    return '<form id="bodyForm" class="food-form">' +
+      '<label class="modal-label">Date<input type="date" name="day" value="' + today + '" class="num-input" required></label>' +
+      '<label class="modal-label">Weight (lb)<input type="number" name="weight" class="num-input" min="0" step="0.1"></label>' +
+      '<label class="modal-label">Body fat %<input type="number" name="bodyFatPct" class="num-input" min="0" step="0.1"></label>' +
+      '<label class="modal-label">BMI<input type="number" name="bmi" class="num-input" min="0" step="0.1"></label>' +
+      '<label class="modal-label">Muscle mass (lb)<input type="number" name="muscleMass" class="num-input" min="0" step="0.1"></label>' +
+      '<button type="submit" class="primary-btn">Save entry</button>' +
+    '</form>';
+  }
+  function renderBody(){
+    const el = document.getElementById('bodyView');
+    const weights = bodyEntries.filter(function(e){ return e.weight!=null; }).map(function(e){ return e.weight; });
+    const bf = bodyEntries.filter(function(e){ return e.body_fat_pct!=null; }).map(function(e){ return e.body_fat_pct; });
+    const bmis = bodyEntries.filter(function(e){ return e.bmi!=null; }).map(function(e){ return e.bmi; });
+    const muscle = bodyEntries.filter(function(e){ return e.muscle_mass!=null; }).map(function(e){ return e.muscle_mass; });
+    el.innerHTML =
+      '<div class="stats-section"><div class="stats-section-head"><h3>Log a reading</h3></div>' + renderBodyForm() + '</div>' +
+      statChartHtml('Weight', weights, 'var(--plate-blue)') +
+      statChartHtml('Body fat %', bf, 'var(--plate-red)') +
+      statChartHtml('Muscle mass', muscle, 'var(--plate-green)') +
+      statChartHtml('BMI', bmis, 'var(--plate-gold)') +
+      '<div class="stats-section"><div class="stats-section-head"><h3>History</h3></div>' + bodyHistoryTableHtml() + '</div>';
   }
 
   // ---------- rendering: header ----------
@@ -870,10 +1015,14 @@
   function progressHeaderHtml(name){
     return '<div class="progress-head"><h3>' + escapeHtml(name) + '</h3><button type="button" id="closeProgress" class="icon-btn" aria-label="Close">×</button></div>';
   }
-  function renderSparkline(values){
+  function renderSparkline(values, opts){
+    opts = opts || {};
+    const color = opts.color || 'var(--plate-gold)';
+    const showDots = opts.dots !== false;
+    const emptyMsg = opts.emptyMsg || 'Need more data for a trend line';
     const w=280,h=76,pad=10;
     if(values.length<2){
-      return '<svg class="sparkline" viewBox="0 0 ' + w + ' ' + h + '"><text x="' + (w/2) + '" y="' + (h/2) + '" text-anchor="middle" font-size="11" fill="var(--steel)">Need 2+ sessions for a trend line</text></svg>';
+      return '<svg class="sparkline" viewBox="0 0 ' + w + ' ' + h + '"><text x="' + (w/2) + '" y="' + (h/2) + '" text-anchor="middle" font-size="11" fill="var(--steel)">' + escapeHtml(emptyMsg) + '</text></svg>';
     }
     const min = Math.min.apply(null, values), max = Math.max.apply(null, values);
     const range = (max-min) || 1;
@@ -883,25 +1032,17 @@
       return [x,y];
     });
     const path = pts.map(function(p,i){ return (i===0?'M':'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ');
-    const dots = pts.map(function(p){ return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="var(--plate-gold)"/>'; }).join('');
+    const dots = showDots ? pts.map(function(p){ return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="' + color + '"/>'; }).join('') : '';
     return '<svg class="sparkline" viewBox="0 0 ' + w + ' ' + h + '">' +
-      '<path d="' + path + '" fill="none" stroke="var(--plate-gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
       dots +
       '<text x="' + pad + '" y="' + (h-2) + '" font-size="9" fill="var(--steel)">' + fmt(min) + '</text>' +
       '<text x="' + (w-pad) + '" y="' + (h-2) + '" font-size="9" fill="var(--steel)" text-anchor="end">' + fmt(max) + '</text>' +
     '</svg>';
   }
-  function renderProgressPanel(name, entries, loading){
-    const panel = document.getElementById('progressPanel');
-    if(!panel) return;
-    panel.hidden = false;
-    if(loading){
-      panel.innerHTML = progressHeaderHtml(name) + '<p class="empty">Loading…</p>';
-      return;
-    }
+  function exerciseHistoryBodyHtml(name, entries){
     if(!entries || entries.length===0){
-      panel.innerHTML = progressHeaderHtml(name) + '<p class="empty">No history yet for ' + escapeHtml(name) + ' — log it again on a future session to start tracking trend.</p>';
-      return;
+      return '<p class="empty">No history yet for ' + escapeHtml(name) + ' — log it again on a future session to start tracking trend.</p>';
     }
     const sorted = entries.slice().sort(function(a,b){ return a.date.localeCompare(b.date); });
     const spark = renderSparkline(sorted.map(function(e){ return e.topWeight; }));
@@ -916,8 +1057,27 @@
       const setsStr = e.sets.map(function(s){ return s.weight + '×' + s.reps; }).join(', ');
       return '<tr><td>' + formatShort(e.date) + '</td><td class="mono">' + setsStr + '</td><td class="mono">' + fmt(e.topWeight) + '</td><td class="trend ' + trendClass + '">' + trend + '</td></tr>';
     }).join('');
-    panel.innerHTML = progressHeaderHtml(name) + spark +
+    return spark +
       '<table class="progress-table"><thead><tr><th>Date</th><th>Sets</th><th>Top</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+  async function loadExerciseHistory(name){
+    const { data, error } = await sb.from('exercises').select('day,sets').eq('user_id', userId).eq('name', name).order('day', {ascending:true});
+    if(error) return [];
+    return (data||[]).map(function(r){
+      let topWeight = 0;
+      (r.sets||[]).forEach(function(s){ if(s.weight > topWeight) topWeight = s.weight; });
+      return {date: r.day, sets: r.sets, topWeight: topWeight};
+    });
+  }
+  function renderProgressPanel(name, entries, loading){
+    const panel = document.getElementById('progressPanel');
+    if(!panel) return;
+    panel.hidden = false;
+    if(loading){
+      panel.innerHTML = progressHeaderHtml(name) + '<p class="empty">Loading…</p>';
+      return;
+    }
+    panel.innerHTML = progressHeaderHtml(name) + exerciseHistoryBodyHtml(name, entries);
   }
 
   // ---------- rendering: calendar ----------
@@ -988,6 +1148,8 @@
     document.getElementById('trainingView').hidden = !(currentPage === 'daily' && activeTab === 'training');
     document.getElementById('calendarView').hidden = currentPage !== 'calendar';
     document.getElementById('mealsView').hidden = currentPage !== 'meals';
+    document.getElementById('statsView').hidden = currentPage !== 'stats';
+    document.getElementById('bodyView').hidden = currentPage !== 'body';
     Array.prototype.forEach.call(document.querySelectorAll('#dailySubTabs .tab'), function(b){
       b.classList.toggle('active', b.dataset.tab === activeTab);
     });
@@ -1022,6 +1184,8 @@
       loadCalendarMonth().then(renderCalendar);
     }
     if(page === 'meals'){ renderMeals(); }
+    if(page === 'stats'){ renderStats(); }
+    if(page === 'body'){ loadBodyStats().then(renderBody); }
   }
   async function changeDate(delta){
     currentDate = new Date(currentDate.getTime() + delta*86400000);
@@ -1149,6 +1313,12 @@
     if(menuItem){ switchPage(menuItem.dataset.page); return; }
     if(!e.target.closest('#menuPanel')){ closeMenu(); }
 
+    const rangeBtn = e.target.closest('[data-stats-range]');
+    if(rangeBtn){ statsDays = parseInt(rangeBtn.dataset.statsRange,10); renderStats(); return; }
+
+    const delBodyBtn = e.target.closest('[data-del-body]');
+    if(delBodyBtn){ deleteBodyStat(delBodyBtn.dataset.delBody); return; }
+
     if(!e.target.closest('.name-search')){
       const box = document.getElementById('mealSuggestResults');
       if(box && !box.hidden){ box.hidden = true; box.innerHTML = ''; }
@@ -1169,6 +1339,11 @@
     }
     if(t.id === 'foodNameInput'){
       renderMealSuggestions(t.value);
+    }
+    if(t.id === 'statsExerciseSelect'){
+      statsExercise = t.value || null;
+      if(statsExercise) renderStatsExercise(statsExercise);
+      else { const p = document.getElementById('statsExercisePanel'); if(p) p.innerHTML = ''; }
     }
   });
 
@@ -1272,6 +1447,21 @@
       });
       closeAddIngredientModal();
       showToast('Ingredient added');
+      return;
+    }
+    if(e.target.id === 'bodyForm'){
+      e.preventDefault();
+      const f = e.target;
+      const day = f.day.value;
+      if(!day){ showToast('Pick a date', true); return; }
+      const weight = f.weight.value === '' ? null : parseFloat(f.weight.value);
+      const bodyFatPct = f.bodyFatPct.value === '' ? null : parseFloat(f.bodyFatPct.value);
+      const bmi = f.bmi.value === '' ? null : parseFloat(f.bmi.value);
+      const muscleMass = f.muscleMass.value === '' ? null : parseFloat(f.muscleMass.value);
+      if(weight===null && bodyFatPct===null && bmi===null && muscleMass===null){
+        showToast('Enter at least one measurement', true); return;
+      }
+      saveBodyStat({day: day, weight: weight, bodyFatPct: bodyFatPct, bmi: bmi, muscleMass: muscleMass});
       return;
     }
     if(e.target.id === 'exerciseForm'){
