@@ -108,14 +108,14 @@
   .food-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
   .food-grid .num-input{font-family:var(--font-mono);font-size:12px;padding:9px 6px;text-align:center;}
 
-  .food-search{position:relative;}
-  .food-search-results{position:absolute;left:0;right:0;top:100%;margin-top:4px;background:var(--panel-2);border:1px solid var(--line);border-radius:4px;max-height:220px;overflow-y:auto;z-index:5;}
-  .food-search-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line);}
-  .food-search-item:last-child{border-bottom:none;}
-  .food-search-item:hover{background:var(--panel);}
-  .food-search-name{font-size:13px;font-weight:500;}
-  .food-search-meta{font-size:11px;color:var(--steel);margin-top:2px;}
-  .food-search-empty{padding:9px 12px;font-size:12px;color:var(--steel);font-style:italic;}
+  .saved-meals{margin-bottom:18px;}
+  .saved-meals-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+  .saved-meals-head span{font-size:12px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--steel);}
+  .saved-meal-list{display:flex;flex-direction:column;gap:6px;}
+  .saved-meal-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:9px 12px;gap:10px;}
+  .saved-meal-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;}
+  .save-meal-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--steel);cursor:pointer;}
+  .save-meal-check input{width:auto;accent-color:var(--plate-gold);}
 
   .food-list{display:flex;flex-direction:column;gap:6px;}
   .food-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel-2);border-radius:4px;padding:10px 12px;gap:10px;}
@@ -295,10 +295,7 @@
   let calSelectedKey = null;
   let calData = {};
   let calInitialized = false;
-  let foodSearchResults = [];
-  let foodSearchTimer = null;
-  let foodSearchError = null;
-  let foodSearchLoading = false;
+  let savedMeals = [];
 
   // ---------- date helpers ----------
   function startOfDay(d){ const x = new Date(d); x.setHours(0,0,0,0); return x; }
@@ -358,6 +355,7 @@
     document.getElementById('trainingView').innerHTML = '<p class="empty">Loading…</p>';
     await ensureSettingsRow();
     await loadExerciseIndex();
+    await loadSavedMeals();
     await loadDateData();
     render();
   }
@@ -476,6 +474,33 @@
     });
     renderProgressPanel(name, entries);
   }
+  async function loadSavedMeals(){
+    const { data, error } = await sb.from('saved_foods').select('*').eq('user_id', userId).order('name', {ascending:true});
+    if(error){ savedMeals = []; return; }
+    savedMeals = data || [];
+  }
+  async function addSavedMeal(entry){
+    const { data, error } = await sb.from('saved_foods').insert({
+      user_id: userId, name: entry.name, cal: entry.cal, protein: entry.protein, carbs: entry.carbs, fat: entry.fat
+    }).select().single();
+    if(error){ showToast('Could not save meal — try again', true); return; }
+    savedMeals.push(data);
+    savedMeals.sort(function(a,b){ return a.name.localeCompare(b.name); });
+    renderMacros();
+  }
+  async function deleteSavedMeal(id){
+    const prev = savedMeals;
+    savedMeals = savedMeals.filter(function(m){ return m.id !== id; });
+    renderMacros();
+    const { error } = await sb.from('saved_foods').delete().eq('id', id).eq('user_id', userId);
+    if(error){ savedMeals = prev; renderMacros(); showToast('Could not delete — try again', true); }
+  }
+  async function quickAddSavedMeal(id){
+    const m = savedMeals.find(function(x){ return x.id === id; });
+    if(!m) return;
+    await addFood({name: m.name, cal: m.cal, protein: m.protein, carbs: m.carbs, fat: m.fat});
+    showToast('Logged');
+  }
   async function loadCalendarMonth(){
     const y = calMonthDate.getFullYear(), m = calMonthDate.getMonth();
     const startKey = formatKey(new Date(y, m, 1));
@@ -571,20 +596,37 @@
         '</div>' +
       '</div>' +
       '<button id="editTargetsBtn" class="ghost-btn targets-btn">Edit targets</button>' +
+      savedMealsHtml() +
       '<form id="foodForm" class="food-form">' +
-        '<div class="food-search">' +
-          '<input type="text" name="name" id="foodNameInput" placeholder="Food — search prepackaged items or type your own" class="text-input" required autocomplete="off">' +
-          '<div id="foodSearchResults" class="food-search-results" hidden></div>' +
-        '</div>' +
+        '<input type="text" name="name" placeholder="Food (e.g., Greek yogurt + berries)" class="text-input" required>' +
         '<div class="food-grid">' +
           '<input type="number" name="cal" placeholder="kcal" min="0" step="1" class="num-input" required>' +
           '<input type="number" name="protein" placeholder="protein g" min="0" step="0.5" class="num-input" required>' +
           '<input type="number" name="carbs" placeholder="carbs g" min="0" step="0.5" class="num-input" required>' +
           '<input type="number" name="fat" placeholder="fat g" min="0" step="0.5" class="num-input" required>' +
         '</div>' +
+        '<label class="save-meal-check"><input type="checkbox" name="saveMeal"> Save as a reusable meal</label>' +
         '<button type="submit" class="primary-btn">Add food</button>' +
       '</form>' +
       '<div class="food-list">' + listHtml + '</div>';
+  }
+  function savedMealsHtml(){
+    const rows = savedMeals.length ? savedMeals.map(function(m){
+      return '<div class="saved-meal-row">' +
+        '<div class="food-main">' +
+          '<span class="food-name">' + escapeHtml(m.name) + '</span>' +
+          '<span class="food-macros mono">' + fmt(m.cal) + ' kcal · P' + fmt(m.protein) + ' · C' + fmt(m.carbs) + ' · F' + fmt(m.fat) + '</span>' +
+        '</div>' +
+        '<div class="saved-meal-actions">' +
+          '<button type="button" class="ghost-btn" data-quick-add="' + m.id + '">+ Add</button>' +
+          '<button type="button" class="icon-btn" data-del-saved="' + m.id + '" aria-label="Delete saved meal">×</button>' +
+        '</div>' +
+      '</div>';
+    }).join('') : '<p class="empty">No saved meals yet — check "Save as a reusable meal" below when logging one you\'ll repeat.</p>';
+    return '<div class="saved-meals">' +
+      '<div class="saved-meals-head"><span>Saved meals</span></div>' +
+      '<div class="saved-meal-list">' + rows + '</div>' +
+    '</div>';
   }
   function renderTargetsForm(){
     const f = document.getElementById('targetsForm');
@@ -595,66 +637,6 @@
       '<label class="modal-label">Carbs (g)<input type="number" name="carbs" value="' + targets.carbs + '" class="num-input" min="0"></label>' +
       '<label class="modal-label">Fat (g)<input type="number" name="fat" value="' + targets.fat + '" class="num-input" min="0"></label>' +
       '<button type="submit" class="primary-btn full">Save targets</button>';
-  }
-  function renderFoodSearchResults(){
-    const box = document.getElementById('foodSearchResults');
-    if(!box) return;
-    if(foodSearchLoading){
-      box.hidden = false;
-      box.innerHTML = '<div class="food-search-empty">Searching…</div>';
-      return;
-    }
-    if(foodSearchError){
-      box.hidden = false;
-      box.innerHTML = '<div class="food-search-empty">Search failed: ' + escapeHtml(foodSearchError) + '</div>';
-      return;
-    }
-    if(!foodSearchResults.length){
-      box.hidden = true;
-      box.innerHTML = '';
-      return;
-    }
-    box.hidden = false;
-    box.innerHTML = foodSearchResults.map(function(r, i){
-      return '<div class="food-search-item" data-search-result="' + i + '">' +
-        '<div class="food-search-name">' + escapeHtml(r.name) + '</div>' +
-        '<div class="food-search-meta mono">' + fmt(r.cal) + ' kcal · P' + fmt(r.protein) + ' · C' + fmt(r.carbs) + ' · F' + fmt(r.fat) + ' (' + escapeHtml(r.basis) + ')</div>' +
-      '</div>';
-    }).join('');
-  }
-  async function searchFoods(query){
-    foodSearchLoading = true;
-    foodSearchError = null;
-    renderFoodSearchResults();
-    try{
-      const url = 'https://world.openfoodfacts.org/cgi/search.pl?search_terms=' + encodeURIComponent(query) + '&search_simple=1&action=process&json=1&page_size=8';
-      const res = await fetch(url);
-      if(!res.ok){ throw new Error('server returned ' + res.status); }
-      const json = await res.json();
-      const products = json.products || [];
-      foodSearchResults = products.map(function(p){
-        const n = p.nutriments || {};
-        const hasServing = n['energy-kcal_serving'] !== undefined;
-        const cal = hasServing ? n['energy-kcal_serving'] : n['energy-kcal_100g'];
-        const protein = hasServing ? n['proteins_serving'] : n['proteins_100g'];
-        const carbs = hasServing ? n['carbohydrates_serving'] : n['carbohydrates_100g'];
-        const fat = hasServing ? n['fat_serving'] : n['fat_100g'];
-        const label = p.product_name || p.generic_name;
-        if(!label || cal === undefined || cal === null) return null;
-        return {
-          name: label + (p.brands ? ' (' + p.brands.split(',')[0].trim() + ')' : ''),
-          cal: cal || 0, protein: protein || 0, carbs: carbs || 0, fat: fat || 0,
-          basis: hasServing ? ('per ' + (p.serving_size || 'serving')) : 'per 100g'
-        };
-      }).filter(Boolean).slice(0, 8);
-      foodSearchLoading = false;
-      renderFoodSearchResults();
-    }catch(e){
-      foodSearchLoading = false;
-      foodSearchResults = [];
-      foodSearchError = (e && e.message) ? e.message : 'unknown error';
-      renderFoodSearchResults();
-    }
   }
 
   // ---------- rendering: training ----------
@@ -919,30 +901,13 @@
     if(e.target.closest('#calNextMonth')){ changeCalMonth(1); return; }
     if(e.target.closest('#calGotoDay')){ gotoCalDay(); return; }
 
-    const searchItem = e.target.closest('[data-search-result]');
-    if(searchItem){
-      const idx = parseInt(searchItem.dataset.searchResult, 10);
-      const r = foodSearchResults[idx];
-      if(r){
-        const form = document.getElementById('foodForm');
-        form.name.value = r.name;
-        form.cal.value = Math.round(r.cal);
-        form.protein.value = Math.round(r.protein*10)/10;
-        form.carbs.value = Math.round(r.carbs*10)/10;
-        form.fat.value = Math.round(r.fat*10)/10;
-      }
-      foodSearchResults = [];
-      renderFoodSearchResults();
-      return;
-    }
+    const quickAddBtn = e.target.closest('[data-quick-add]');
+    if(quickAddBtn){ quickAddSavedMeal(quickAddBtn.dataset.quickAdd); return; }
+    const delSavedBtn = e.target.closest('[data-del-saved]');
+    if(delSavedBtn){ deleteSavedMeal(delSavedBtn.dataset.delSaved); return; }
 
     const tabBtn = e.target.closest('.tab');
     if(tabBtn){ switchTab(tabBtn.dataset.tab); return; }
-
-    if(!e.target.closest('.food-search') && foodSearchResults.length){
-      foodSearchResults = [];
-      renderFoodSearchResults();
-    }
   });
 
   document.addEventListener('input', function(e){
@@ -951,12 +916,6 @@
       const idx = parseInt(t.dataset.setIndex,10);
       const field = t.dataset.setField;
       pendingSets[idx][field] = t.value === '' ? '' : parseFloat(t.value);
-    }
-    if(t.id === 'foodNameInput'){
-      clearTimeout(foodSearchTimer);
-      const q = t.value.trim();
-      if(q.length < 2){ foodSearchResults = []; foodSearchError = null; foodSearchLoading = false; renderFoodSearchResults(); return; }
-      foodSearchTimer = setTimeout(function(){ searchFoods(q); }, 400);
     }
   });
 
@@ -998,13 +957,15 @@
       const f = e.target;
       const name = f.name.value.trim();
       if(!name){ showToast('Add a food name', true); return; }
-      addFood({
+      const entry = {
         name: name,
         cal: parseFloat(f.cal.value)||0,
         protein: parseFloat(f.protein.value)||0,
         carbs: parseFloat(f.carbs.value)||0,
         fat: parseFloat(f.fat.value)||0
-      });
+      };
+      addFood(entry);
+      if(f.saveMeal.checked) addSavedMeal(entry);
       f.reset();
       showToast('Logged');
       return;
