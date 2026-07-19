@@ -728,7 +728,16 @@
           setAuthMsg('Check your email to confirm your account, then sign in.');
           return;
         }
-        if(res.data.session){ onSignedIn(res.data.session.user); }
+        if(res.data.session){
+          onSignedIn(res.data.session.user).catch(function(err){
+            setAuthMsg('Signed in, but could not load your data: ' + (err && err.message ? err.message : 'unknown error'), true);
+          });
+        } else {
+          setAuthMsg('Sign-in did not return a session — please try again.', true);
+        }
+      }).catch(function(err){
+        btn.disabled = false;
+        setAuthMsg('Could not reach the server — check your connection and try again.' + (err && err.message ? ' (' + err.message + ')' : ''), true);
       });
       return;
     }
