@@ -56,8 +56,6 @@
   .date-nav button:hover{border-color:var(--steel);}
   #dateLabel{font-family:var(--font-mono);font-size:13px;letter-spacing:1px;min-width:120px;text-align:center;text-transform:uppercase;}
   #todayBtn{font-family:var(--font-mono);font-size:10px;letter-spacing:1px;background:none;border:1px solid var(--plate-gold);color:var(--plate-gold);border-radius:3px;padding:3px 8px;cursor:pointer;width:auto;height:auto;text-transform:uppercase;}
-  #signOutBtn{background:none;border:none;color:var(--steel);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;padding:4px 0;}
-  #signOutBtn:hover{color:var(--chalk);}
   .header-actions{display:flex;align-items:center;gap:14px;}
   .menu-btn{background:none;border:1px solid var(--line);color:var(--chalk);width:30px;height:30px;border-radius:3px;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .menu-btn:hover{border-color:var(--steel);}
@@ -66,6 +64,7 @@
   .menu-item:last-child{border-bottom:none;}
   .menu-item:hover{background:var(--panel-2);}
   .menu-item.active{color:var(--plate-gold);font-weight:700;}
+  .menu-item-danger{color:var(--plate-red);}
 
   .tabs{display:flex;border-top:1px solid var(--line);}
   .tabs[hidden]{display:none;}
@@ -295,7 +294,6 @@
       <div><span class="brand">LOAD LOG</span><span class="tagline">recomp tracker</span></div>
       <div class="header-actions">
         <button id="menuBtn" class="menu-btn" type="button" aria-label="Menu" aria-haspopup="true">☰</button>
-        <button id="signOutBtn" type="button">Sign out</button>
       </div>
       <div id="menuPanel" class="menu-panel" hidden>
         <button type="button" class="menu-item" data-page="daily">Daily Tracker</button>
@@ -303,6 +301,7 @@
         <button type="button" class="menu-item" data-page="meals">Saved Meals</button>
         <button type="button" class="menu-item" data-page="stats">Stats</button>
         <button type="button" class="menu-item" data-page="body">Body Stats</button>
+        <button id="signOutBtn" type="button" class="menu-item menu-item-danger">Sign out</button>
       </div>
     </div>
     <div class="date-nav" id="dateNav">
@@ -1446,7 +1445,7 @@
     if(e.target.closest('#prevDay')){ changeDate(-1); return; }
     if(e.target.closest('#nextDay')){ changeDate(1); return; }
     if(e.target.closest('#todayBtn')){ jumpToday(); return; }
-    if(e.target.closest('#signOutBtn')){ sb.auth.signOut(); return; }
+    if(e.target.closest('#signOutBtn')){ closeMenu(); sb.auth.signOut(); return; }
     if(e.target.closest('#authToggle')){ setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); return; }
 
     const calDayBtn = e.target.closest('[data-cal-day]');
