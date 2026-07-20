@@ -155,6 +155,8 @@
   .servings-input{width:64px;font-family:var(--font-mono);text-align:center;padding:6px;}
   .meal-batch-total{color:var(--steel);font-size:11px;}
   .meal-edit-toggle{margin-top:6px;}
+  .meal-edit-actions{display:flex;align-items:center;gap:16px;margin-top:6px;}
+  .meal-edit-actions .meal-edit-toggle{margin-top:0;}
   .ingredient-list{display:flex;flex-direction:column;}
   .ingredient-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;}
   .ingredient-row:last-child{border-bottom:none;}
@@ -990,9 +992,12 @@
             '<label>Servings <input type="number" min="1" step="1" value="' + servings + '" data-servings-meal="' + m.id + '" class="num-input servings-input"></label>' +
             (servings > 1 ? '<span class="mono meal-batch-total">Batch total: ' + fmt(t.cal) + ' kcal · P' + fmt(t.protein) + ' · C' + fmt(t.carbs) + ' · F' + fmt(t.fat) + '</span>' : '') +
           '</div>' +
-          '<div class="ingredient-list">' + ingHtml + '</div>' +
-          '<button type="button" class="link-btn" data-add-ingredient="' + m.id + '">+ Add ingredient</button>';
+          '<div class="ingredient-list">' + ingHtml + '</div>';
       }
+      const toggleBtnHtml = '<button type="button" class="link-btn meal-edit-toggle" data-toggle-meal="' + m.id + '">' + (expanded ? 'Done' : 'Edit ingredients') + '</button>';
+      const actionsHtml = expanded
+        ? '<div class="meal-edit-actions"><button type="button" class="link-btn" data-add-ingredient="' + m.id + '">+ Add ingredient</button>' + toggleBtnHtml + '</div>'
+        : toggleBtnHtml;
       return '<div class="meal-card">' +
         '<div class="meal-card-head">' +
           '<span class="food-name">' + escapeHtml(m.name) + '</span>' +
@@ -1003,7 +1008,7 @@
         '</div>' +
         '<div class="meal-total mono">' + fmt(p.cal) + ' kcal · P' + fmt(p.protein) + ' · C' + fmt(p.carbs) + ' · F' + fmt(p.fat) + ' <span class="meal-per-serving-label">per serving</span></div>' +
         detailHtml +
-        '<button type="button" class="link-btn meal-edit-toggle" data-toggle-meal="' + m.id + '">' + (expanded ? 'Done' : 'Edit ingredients') + '</button>' +
+        actionsHtml +
       '</div>';
     }).join('') : '<p class="empty">No saved meals yet — tap "New meal" to add one you\'ll reuse.</p>';
     el.innerHTML =
