@@ -544,9 +544,13 @@
     if(error){ habits = []; return; }
     habits = data || [];
   }
-  async function addHabit(name, unit, goal, step){
+  async function addHabit(name, method, unit, goal, step){
+    const isQuantity = method !== 'checkbox';
     const { data, error } = await sb.from('habits').insert({
-      user_id: userId, name: name, unit: unit || null, goal: unit ? goal : null, step: step || 1
+      user_id: userId, name: name, method: method,
+      unit: isQuantity ? unit : null,
+      goal: isQuantity ? goal : null,
+      step: step || 1
     }).select().single();
     if(error){ showToast('Could not save — try again', true); return; }
     habits.push(data);
@@ -961,9 +965,9 @@
     if(!el) return;
     const rows = habits.length ? habits.map(function(h, idx){
       const amount = habitDay[h.id] || 0;
-      const isCheckin = !h.unit;
+      const method = h.method || (h.unit ? 'stepper' : 'checkbox');
       let bodyHtml;
-      if(isCheckin){
+      if(method === 'checkbox'){
         const done = amount > 0;
         bodyHtml = '<button type="button" class="' + (done ? 'primary-btn' : 'ghost-btn') + ' habit-checkin-btn" data-toggle-checkin="' + h.id + '">' + (done ? '✓ Done today' : 'Mark done') + '</button>';
       } else {
@@ -976,16 +980,18 @@
           ? (done ? 'Goal reached 🎉' : fmt(goal-amount) + ' ' + escapeHtml(h.unit) + ' to go')
           : '';
         const sliderMax = Math.max(goal, amount, step*4, 10);
+        const controlsHtml = method === 'slider'
+          ? '<input type="range" class="habit-slider" min="0" max="' + sliderMax + '" step="' + step + '" value="' + amount + '" data-habit-slider="' + h.id + '">'
+          : '<div class="habit-controls">' +
+              '<button type="button" class="habit-step-btn" data-habit-step="' + h.id + ':-' + step + '" aria-label="Decrease">−</button>' +
+              '<input type="number" class="num-input habit-amount-input" data-habit-amount-input="' + h.id + '" value="' + amount + '" step="' + step + '" min="0">' +
+              '<button type="button" class="habit-step-btn" data-habit-step="' + h.id + ':' + step + '" aria-label="Increase">+</button>' +
+            '</div>';
         bodyHtml =
           '<div class="habit-progress-label mono">' + fmt(amount) + (goal>0 ? ' / ' + fmt(goal) : '') + ' ' + escapeHtml(h.unit) + '</div>' +
           (goal > 0 ? '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' : '') +
           (statusLine ? '<div class="habit-remaining' + (done ? ' habit-remaining-done' : '') + '">' + statusLine + '</div>' : '') +
-          '<div class="habit-controls">' +
-            '<button type="button" class="habit-step-btn" data-habit-step="' + h.id + ':-' + step + '" aria-label="Decrease">−</button>' +
-            '<input type="number" class="num-input habit-amount-input" data-habit-amount-input="' + h.id + '" value="' + amount + '" step="' + step + '" min="0">' +
-            '<button type="button" class="habit-step-btn" data-habit-step="' + h.id + ':' + step + '" aria-label="Increase">+</button>' +
-          '</div>' +
-          '<input type="range" class="habit-slider" min="0" max="' + sliderMax + '" step="' + step + '" value="' + amount + '" data-habit-slider="' + h.id + '">';
+          controlsHtml;
       }
       return '<div class="meal-card">' +
         '<div class="meal-card-head">' +
@@ -1004,11 +1010,30 @@
     if(!f) return;
     f.innerHTML =
       '<label class="modal-label">Habit name<input type="text" name="habitName" class="text-input" required></label>' +
-      '<label class="modal-label">Unit (optional)<input type="text" name="unit" class="text-input" placeholder="e.g. oz, minutes, pages"></label>' +
-      '<label class="modal-label">Daily goal (required if you set a unit)<input type="number" name="goal" class="num-input" min="0" step="0.1"></label>' +
-      '<label class="modal-label">Step size for the +/− buttons<input type="number" name="step" class="num-input" min="0.1" step="0.1" value="1"></label>' +
-      '<p class="habit-empty-hint">Leave the unit blank for a simple done/not-done habit, like "Meditated" or "Took vitamins."</p>' +
+      '<label class="modal-label">How do you want to log it?' +
+        '<select name="method" id="habitMethodSelect" class="text-input">' +
+          '<option value="checkbox">Checkbox — simple done / not done</option>' +
+          '<option value="stepper">+/− buttons — count up or down to a goal</option>' +
+          '<option value="slider">Slider — drag to a goal</option>' +
+        '</select>' +
+      '</label>' +
+      '<div id="habitQuantityFields" hidden>' +
+        '<label class="modal-label">Unit<input type="text" name="unit" class="text-input" placeholder="e.g. oz, minutes, pages"></label>' +
+        '<label class="modal-label">Daily goal<input type="number" name="goal" class="num-input" min="0" step="0.1"></label>' +
+        '<label class="modal-label">Step size<input type="number" name="step" class="num-input" min="0.1" step="0.1" value="1"></label>' +
+      '</div>' +
+      '<p class="habit-empty-hint" id="habitCheckboxHint">A checkbox habit, like "Meditated" or "Took vitamins," is just marked done or not each day.</p>' +
       '<button type="submit" class="primary-btn full">Save habit</button>';
+    updateHabitFormFields();
+  }
+  function updateHabitFormFields(){
+    const sel = document.getElementById('habitMethodSelect');
+    const fields = document.getElementById('habitQuantityFields');
+    const hint = document.getElementById('habitCheckboxHint');
+    if(!sel || !fields) return;
+    const isQuantity = sel.value !== 'checkbox';
+    fields.hidden = !isQuantity;
+    if(hint) hint.hidden = isQuantity;
   }
   function renderMeals(){
     const el = document.getElementById('mealsView');
@@ -1551,6 +1576,7 @@
       if(statsExercise) renderStatsExercise(statsExercise);
       else { const p = document.getElementById('statsExercisePanel'); if(p) p.innerHTML = ''; }
     }
+    if(t.id === 'habitMethodSelect'){ updateHabitFormFields(); }
   });
 
   document.addEventListener('change', function(e){
@@ -1689,12 +1715,17 @@
       e.preventDefault();
       const f = e.target;
       const name = f.habitName.value.trim();
-      const unit = f.unit.value.trim();
+      const method = f.method.value;
       if(!name){ showToast('Add a habit name', true); return; }
-      const goal = parseFloat(f.goal.value) || 0;
-      if(unit && goal <= 0){ showToast('Set a daily goal for this habit', true); return; }
-      const step = parseFloat(f.step.value) || 1;
-      addHabit(name, unit, goal, step);
+      let unit = '', goal = 0, step = 1;
+      if(method !== 'checkbox'){
+        unit = f.unit.value.trim();
+        goal = parseFloat(f.goal.value) || 0;
+        step = parseFloat(f.step.value) || 1;
+        if(!unit){ showToast('Add a unit for this habit', true); return; }
+        if(goal <= 0){ showToast('Set a daily goal for this habit', true); return; }
+      }
+      addHabit(name, method, unit, goal, step);
       closeHabitModal();
       showToast('Habit added');
       return;
