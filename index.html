@@ -106,7 +106,8 @@
 
   .ghost-btn{background:none;border:1px solid var(--line);color:var(--chalk);font-family:var(--font-body);font-size:12px;font-weight:600;letter-spacing:.5px;padding:7px 12px;border-radius:3px;cursor:pointer;}
   .ghost-btn:hover{border-color:var(--steel);}
-  .targets-btn{margin-bottom:16px;color:var(--steel);}
+  .targets-btn{color:var(--steel);}
+  .macro-actions-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px;}
   .primary-btn{background:var(--plate-green);border:none;color:var(--chalk);font-family:var(--font-body);font-weight:700;font-size:13px;letter-spacing:.5px;text-transform:uppercase;padding:11px 16px;border-radius:3px;cursor:pointer;width:100%;}
   .primary-btn:hover{filter:brightness(1.08);}
   .primary-btn:disabled{opacity:.6;cursor:default;filter:none;}
@@ -183,6 +184,10 @@
   .progress-head h3{margin:0;font-size:16px;font-weight:600;}
 
   /* Training */
+  .training-actions{display:flex;justify-content:flex-end;margin-bottom:6px;}
+  .split-row{display:flex;gap:8px;align-items:flex-start;}
+  .split-full{flex:2;}
+  .split-short{flex:1;}
   .barbell{position:relative;display:flex;justify-content:space-between;align-items:center;margin:10px 4px 22px;padding:0 4px;}
   .bar-line{position:absolute;left:4px;right:4px;top:22px;height:3px;background:var(--line);z-index:0;}
   .plate-wrap{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;}
@@ -379,6 +384,12 @@
     <form id="reminderForm"></form>
   </div>
 </div>
+<div id="splitModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="progress-head"><h3>Edit training split</h3><button type="button" id="closeSplit" class="icon-btn" aria-label="Close">×</button></div>
+    <form id="splitForm"></form>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -389,17 +400,22 @@
   const SUPABASE_KEY = 'sb_publishable_6apH0Qf2Xo783YtmBgnLOQ_rMsM1FVt';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  const DAY_LABELS = ['Back & Biceps','Legs & Glutes','Shoulders','Legs & Glutes','Abs','Legs & Glutes','Rest Day'];
-  const DAY_SHORT  = ['Back/Bi','Legs','Shoulders','Legs','Abs','Legs','Rest'];
+  const DEFAULT_DAY_LABELS = ['Back & Biceps','Legs & Glutes','Shoulders','Legs & Glutes','Abs','Legs & Glutes','Rest Day'];
+  const DEFAULT_DAY_SHORT  = ['Back/Bi','Legs','Shoulders','Legs','Abs','Legs','Rest'];
   const DAY_COLOR  = ['plate-red','plate-blue','plate-gold','plate-blue','plate-green','plate-blue','steel-dim'];
-  const NUM_DAYS = DAY_LABELS.length;
-  const CAL_LEGEND = [
-    {label:'Back & Biceps', color:'plate-red'},
-    {label:'Legs & Glutes', color:'plate-blue'},
-    {label:'Shoulders', color:'plate-gold'},
-    {label:'Abs', color:'plate-green'},
-    {label:'Rest Day', color:'steel-dim'}
-  ];
+  const NUM_DAYS = DEFAULT_DAY_LABELS.length;
+  let dayLabels = DEFAULT_DAY_LABELS.slice();
+  let dayShort = DEFAULT_DAY_SHORT.slice();
+  function buildCalLegend(){
+    const seen = {};
+    const legend = [];
+    for(let i=0;i<NUM_DAYS;i++){
+      if(seen[DAY_COLOR[i]]) continue;
+      seen[DAY_COLOR[i]] = true;
+      legend.push({label: dayLabels[i], color: DAY_COLOR[i]});
+    }
+    return legend;
+  }
 
   let userId = null;
   let authMode = 'signin';
@@ -408,6 +424,7 @@
   let currentPage = 'daily';
   let targets = {calories:1800, protein:125, carbs:210, fat:50};
   let macroDay = {entries:[]};
+  let showFoodForm = false;
   let habits = [];
   let habitDay = {};
   let dayReminders = [];
@@ -510,15 +527,28 @@
 
   // ---------- data loading ----------
   async function ensureSettingsRow(){
-    const { data, error } = await sb.from('settings').select('targets,last_day_index').eq('user_id', userId).maybeSingle();
+    const { data, error } = await sb.from('settings').select('targets,last_day_index,split').eq('user_id', userId).maybeSingle();
     if(error){ showToast('Could not load settings', true); return; }
     if(data){
       targets = data.targets;
       lastDayIndex = data.last_day_index;
+      if(data.split && Array.isArray(data.split.full) && data.split.full.length === NUM_DAYS){
+        dayLabels = data.split.full.slice();
+        dayShort = (Array.isArray(data.split.short) && data.split.short.length === NUM_DAYS) ? data.split.short.slice() : data.split.full.map(function(l){ return l.slice(0,10); });
+      }
     } else {
       const { error: insErr } = await sb.from('settings').insert({user_id: userId, targets: targets, last_day_index: -1});
       if(insErr) showToast('Could not save — try again', true);
     }
+  }
+  async function saveSplit(fullArr, shortArr){
+    dayLabels = fullArr;
+    dayShort = shortArr;
+    renderTraining();
+    if(currentPage === 'calendar') renderCalendar();
+    const { error } = await sb.from('settings').update({split: {full: fullArr, short: shortArr}, updated_at: new Date().toISOString()}).eq('user_id', userId);
+    if(error) showToast('Could not save split — try again', true);
+    else showToast('Split updated');
   }
   async function loadExerciseIndex(){
     const { data, error } = await sb.from('exercises').select('name').eq('user_id', userId);
@@ -1030,21 +1060,25 @@
           macroBarHtml('Fat', totals.fat, targets.fat, 'fat') +
         '</div>' +
       '</div>' +
-      '<button id="editTargetsBtn" class="ghost-btn targets-btn">Edit targets</button>' +
-      '<form id="foodForm" class="food-form">' +
-        '<div class="name-search">' +
-          '<input type="text" name="name" id="foodNameInput" placeholder="Food (e.g., Greek yogurt + berries)" class="text-input" required autocomplete="off">' +
-          '<div id="mealSuggestResults" class="meal-suggest-results" hidden></div>' +
-        '</div>' +
-        '<div class="food-grid">' +
-          '<input type="number" name="cal" placeholder="kcal" min="0" step="1" class="num-input" required>' +
-          '<input type="number" name="protein" placeholder="protein g" min="0" step="0.5" class="num-input" required>' +
-          '<input type="number" name="carbs" placeholder="carbs g" min="0" step="0.5" class="num-input" required>' +
-          '<input type="number" name="fat" placeholder="fat g" min="0" step="0.5" class="num-input" required>' +
-        '</div>' +
-        '<label class="save-meal-check"><input type="checkbox" name="saveMeal"> Save as a reusable meal</label>' +
-        '<button type="submit" class="primary-btn">Add food</button>' +
-      '</form>' +
+      '<div class="macro-actions-row">' +
+        '<button id="editTargetsBtn" class="ghost-btn targets-btn">Edit targets</button>' +
+        '<button id="toggleFoodFormBtn" type="button" class="ghost-btn">' + (showFoodForm ? 'Cancel' : '+ Add food') + '</button>' +
+      '</div>' +
+      (showFoodForm ?
+        '<form id="foodForm" class="food-form">' +
+          '<div class="name-search">' +
+            '<input type="text" name="name" id="foodNameInput" placeholder="Food (e.g., Greek yogurt + berries)" class="text-input" required autocomplete="off">' +
+            '<div id="mealSuggestResults" class="meal-suggest-results" hidden></div>' +
+          '</div>' +
+          '<div class="food-grid">' +
+            '<input type="number" name="cal" placeholder="kcal" min="0" step="1" class="num-input" required>' +
+            '<input type="number" name="protein" placeholder="protein g" min="0" step="0.5" class="num-input" required>' +
+            '<input type="number" name="carbs" placeholder="carbs g" min="0" step="0.5" class="num-input" required>' +
+            '<input type="number" name="fat" placeholder="fat g" min="0" step="0.5" class="num-input" required>' +
+          '</div>' +
+          '<label class="save-meal-check"><input type="checkbox" name="saveMeal"> Save as a reusable meal</label>' +
+          '<button type="submit" class="primary-btn">Add food</button>' +
+        '</form>' : '') +
       '<div class="food-list">' + listHtml + '</div>';
   }
   function sortReminders(list){
@@ -1285,14 +1319,26 @@
       '<label class="modal-label">Fat (g)<input type="number" name="fat" value="' + targets.fat + '" class="num-input" min="0"></label>' +
       '<button type="submit" class="primary-btn full">Save targets</button>';
   }
+  function renderSplitForm(){
+    const f = document.getElementById('splitForm');
+    if(!f) return;
+    f.innerHTML = dayLabels.map(function(label, i){
+      return '<div class="split-row">' +
+        '<label class="modal-label split-full">Day ' + (i+1) +
+          '<input type="text" data-split-field="full" data-split-index="' + i + '" value="' + escapeHtml(label) + '" class="text-input" required></label>' +
+        '<label class="modal-label split-short">Tag' +
+          '<input type="text" data-split-field="short" data-split-index="' + i + '" value="' + escapeHtml(dayShort[i]) + '" class="text-input" maxlength="10" required></label>' +
+      '</div>';
+    }).join('') + '<button type="submit" class="primary-btn full">Save split</button>';
+  }
 
   // ---------- rendering: training ----------
   function renderBarbellHtml(){
     let plates = '';
     for(let i=0;i<NUM_DAYS;i++){
       plates += '<div class="plate-wrap">' +
-        '<button type="button" class="plate' + (workoutDay.dayIndex===i?' active':'') + '" data-plate="' + i + '" aria-label="' + DAY_LABELS[i] + '"></button>' +
-        '<span class="plate-label">' + DAY_SHORT[i] + '</span>' +
+        '<button type="button" class="plate' + (workoutDay.dayIndex===i?' active':'') + '" data-plate="' + i + '" aria-label="' + dayLabels[i] + '"></button>' +
+        '<span class="plate-label">' + dayShort[i] + '</span>' +
       '</div>';
     }
     return '<div class="barbell"><div class="bar-line"></div>' + plates + '</div>';
@@ -1312,7 +1358,7 @@
   }
   function renderTraining(){
     const el = document.getElementById('trainingView');
-    const dayFull = DAY_LABELS[workoutDay.dayIndex] || DAY_LABELS[0];
+    const dayFull = dayLabels[workoutDay.dayIndex] || dayLabels[0];
     const exercises = workoutDay.exercises || [];
     const exercisesHtml = exercises.length ? exercises.map(function(ex){
       const setsStr = ex.sets.map(function(s){ return s.weight + '×' + s.reps; }).join('  ·  ');
@@ -1332,6 +1378,7 @@
 
     el.innerHTML =
       renderBarbellHtml() +
+      '<div class="training-actions"><button type="button" id="editSplitBtn" class="ghost-btn">Edit split</button></div>' +
       '<h2 class="day-heading">' + escapeHtml(dayFull) + '</h2>' +
       '<div class="exercise-list">' + exercisesHtml + '</div>' +
       '<form id="exerciseForm" class="exercise-form">' +
@@ -1421,7 +1468,7 @@
       return '<p class="empty">Tap a day to see what was logged.</p>';
     }
     const info = calData[calSelectedKey] || {cal:0, dayIndex:null, exercises:[], habits:{}, reminders:[]};
-    const splitLabel = (info.dayIndex === null || info.dayIndex === undefined) ? 'No split assigned' : DAY_LABELS[info.dayIndex];
+    const splitLabel = (info.dayIndex === null || info.dayIndex === undefined) ? 'No split assigned' : dayLabels[info.dayIndex];
     const exHtml = info.exercises.length ? info.exercises.map(function(ex){
       const setsStr = ex.sets.map(function(s){ return s.weight + '×' + s.reps; }).join('  ·  ');
       return '<div class="cal-exercise-row"><strong>' + escapeHtml(ex.name) + '</strong> <span class="mono">' + setsStr + '</span></div>';
@@ -1487,7 +1534,7 @@
     }
 
     const dowHtml = ['S','M','T','W','T','F','S'].map(function(d){ return '<div class="cal-dow">' + d + '</div>'; }).join('');
-    const legendHtml = '<div class="cal-legend">' + CAL_LEGEND.map(function(l){
+    const legendHtml = '<div class="cal-legend">' + buildCalLegend().map(function(l){
       return '<span class="cal-legend-item"><span class="cal-dot" style="background:var(--' + l.color + ')"></span>' + l.label + '</span>';
     }).join('') + '</div>';
 
@@ -1563,6 +1610,19 @@
     currentDate = startOfDay(new Date());
     await loadDateData();
     render();
+  }
+  function openSplitModal(){
+    renderSplitForm();
+    const m = document.getElementById('splitModal');
+    if(m) m.hidden = false;
+  }
+  function closeSplitModal(){
+    const m = document.getElementById('splitModal');
+    if(m) m.hidden = true;
+  }
+  function toggleFoodForm(){
+    showFoodForm = !showFoodForm;
+    renderMacros();
   }
   function openTargetsModal(){
     renderTargetsForm();
@@ -1645,6 +1705,9 @@
     if(e.target.closest('#addSetBtn')){ addPendingSetRow(); return; }
     if(e.target.closest('#closeProgress')){ const p = document.getElementById('progressPanel'); if(p) p.hidden = true; return; }
     if(e.target.closest('#editTargetsBtn')){ openTargetsModal(); return; }
+    if(e.target.closest('#toggleFoodFormBtn')){ toggleFoodForm(); return; }
+    if(e.target.closest('#editSplitBtn')){ openSplitModal(); return; }
+    if(e.target.closest('#closeSplit')){ closeSplitModal(); return; }
     if(e.target.closest('#closeTargets')){ closeTargetsModal(); return; }
     if(e.target.closest('#prevDay')){ changeDate(-1); return; }
     if(e.target.closest('#nextDay')){ changeDate(1); return; }
@@ -1824,6 +1887,7 @@
         carbs: parseFloat(f.carbs.value)||0,
         fat: parseFloat(f.fat.value)||0
       };
+      showFoodForm = false;
       addFood(entry);
       if(f.saveMeal.checked) addSavedMeal(entry.name, [entry]);
       f.reset();
@@ -1842,6 +1906,22 @@
       closeTargetsModal();
       renderMacros();
       showToast('Targets updated');
+      return;
+    }
+    if(e.target.id === 'splitForm'){
+      e.preventDefault();
+      const f = e.target;
+      const fullArr = dayLabels.slice();
+      const shortArr = dayShort.slice();
+      Array.prototype.forEach.call(f.querySelectorAll('[data-split-field]'), function(input){
+        const i = parseInt(input.dataset.splitIndex, 10);
+        const val = input.value.trim();
+        if(!val){ return; }
+        if(input.dataset.splitField === 'full') fullArr[i] = val;
+        else shortArr[i] = val;
+      });
+      saveSplit(fullArr, shortArr);
+      closeSplitModal();
       return;
     }
     if(e.target.id === 'savedMealForm'){
