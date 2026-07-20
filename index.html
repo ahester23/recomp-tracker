@@ -134,6 +134,18 @@
   .save-meal-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--steel);cursor:pointer;}
   .save-meal-check input{width:auto;accent-color:var(--plate-gold);}
 
+  .hydration-summary{display:flex;gap:14px;margin-bottom:18px;}
+  .hydration-stat{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;text-align:center;}
+  .hydration-stat-label{display:block;font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+  .hydration-stat-num{font-size:22px;font-weight:600;}
+  .hydration-stat-num small{font-size:12px;color:var(--steel);font-weight:500;}
+  .hydration-quick{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
+  .hydration-quick-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .hydration-quick-label{font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;width:60px;flex-shrink:0;}
+  .hydration-form-row{display:flex;gap:8px;}
+  .hydration-form-row select{flex:1;}
+  .hydration-form-row input{flex:1;}
+
   .meal-card{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:12px 14px;}
   .meal-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px;}
   .meal-total{color:var(--chalk);font-size:14px;font-weight:600;margin-bottom:8px;}
@@ -142,6 +154,7 @@
   .meal-servings label{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;}
   .servings-input{width:64px;font-family:var(--font-mono);text-align:center;padding:6px;}
   .meal-batch-total{color:var(--steel);font-size:11px;}
+  .meal-edit-toggle{margin-top:6px;}
   .ingredient-list{display:flex;flex-direction:column;}
   .ingredient-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;}
   .ingredient-row:last-child{border-bottom:none;}
@@ -304,11 +317,13 @@
     <nav class="tabs" id="dailySubTabs">
       <button class="tab active" data-tab="macros">Macros</button>
       <button class="tab" data-tab="training">Training</button>
+      <button class="tab" data-tab="hydration">Hydration</button>
     </nav>
   </header>
   <main>
     <section id="macrosView"><p class="empty">Loading…</p></section>
     <section id="trainingView" hidden><p class="empty">Loading…</p></section>
+    <section id="hydrationView" hidden><p class="empty">Loading…</p></section>
     <section id="calendarView" hidden><p class="empty">Loading…</p></section>
     <section id="mealsView" hidden><p class="empty">Loading…</p></section>
     <section id="statsView" hidden><p class="empty">Loading…</p></section>
@@ -362,6 +377,7 @@
   let currentPage = 'daily';
   let targets = {calories:1800, protein:125, carbs:210, fat:50};
   let macroDay = {entries:[]};
+  let hydrationDay = {entries:[]};
   let workoutDay = {dayIndex:0, exercises:[]};
   let lastDayIndex = -1;
   let exerciseIndex = [];
@@ -373,6 +389,7 @@
   let savedMeals = [];
   let pendingIngredients = [{name:'',cal:'',protein:'',carbs:'',fat:''}];
   let addIngredientMealId = null;
+  let expandedMealIds = new Set();
   let statsDays = 30;
   let statsData = null;
   let statsExercise = null;
@@ -476,10 +493,11 @@
   }
   async function loadDateData(){
     const key = currentKey();
-    const [foodRes, workoutRes, exRes] = await Promise.all([
+    const [foodRes, workoutRes, exRes, hydrationRes] = await Promise.all([
       sb.from('food_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
       sb.from('workout_days').select('*').eq('user_id', userId).eq('day', key).maybeSingle(),
-      sb.from('exercises').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true})
+      sb.from('exercises').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
+      sb.from('hydration_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true})
     ]);
     macroDay = { entries: (foodRes.data || []).map(function(r){
       return {id:r.id, name:r.name, cal:r.cal, protein:r.protein, carbs:r.carbs, fat:r.fat};
@@ -487,6 +505,9 @@
     const dayIndex = workoutRes.data ? workoutRes.data.day_index : (lastDayIndex+1+NUM_DAYS)%NUM_DAYS;
     workoutDay = { dayIndex: dayIndex, exercises: (exRes.data || []).map(function(r){
       return {id:r.id, name:r.name, sets:r.sets};
+    }) };
+    hydrationDay = { entries: (hydrationRes.data || []).map(function(r){
+      return {id:r.id, type:r.type, amount:r.amount};
     }) };
     pendingSets = [{weight:'',reps:''}];
   }
@@ -507,6 +528,21 @@
     renderMacros();
     const { error } = await sb.from('food_entries').delete().eq('id', id).eq('user_id', userId);
     if(error){ macroDay.entries = prev; renderMacros(); showToast('Could not delete — try again', true); }
+  }
+  async function addHydration(type, amount){
+    const { data, error } = await sb.from('hydration_entries').insert({
+      user_id: userId, day: currentKey(), type: type, amount: amount
+    }).select().single();
+    if(error){ showToast('Could not save — try again', true); return; }
+    hydrationDay.entries.push({id:data.id, type:data.type, amount:data.amount});
+    renderHydration();
+  }
+  async function deleteHydration(id){
+    const prev = hydrationDay.entries;
+    hydrationDay.entries = hydrationDay.entries.filter(function(e){ return e.id !== id; });
+    renderHydration();
+    const { error } = await sb.from('hydration_entries').delete().eq('id', id).eq('user_id', userId);
+    if(error){ hydrationDay.entries = prev; renderHydration(); showToast('Could not delete — try again', true); }
   }
   async function saveTargets(t){
     targets = t;
@@ -586,6 +622,11 @@
     renderMeals();
     const { error } = await sb.from('saved_foods').update({servings: servings}).eq('id', mealId).eq('user_id', userId);
     if(error){ meal.servings = prev; renderMeals(); showToast('Could not update servings — try again', true); }
+  }
+  function toggleMealExpanded(id){
+    if(expandedMealIds.has(id)) expandedMealIds.delete(id);
+    else expandedMealIds.add(id);
+    renderMeals();
   }
   async function addSavedMeal(name, ingredients, servings){
     const { data, error } = await sb.from('saved_foods').insert({user_id: userId, name: name, servings: servings || 1}).select().single();
@@ -875,23 +916,83 @@
       '</form>' +
       '<div class="food-list">' + listHtml + '</div>';
   }
+  function hydrationTotals(){
+    return (hydrationDay.entries||[]).reduce(function(acc, e){
+      if(e.type === 'water') acc.water += e.amount||0;
+      else if(e.type === 'caffeine') acc.caffeine += e.amount||0;
+      return acc;
+    }, {water:0, caffeine:0});
+  }
+  function renderHydration(){
+    const el = document.getElementById('hydrationView');
+    if(!el) return;
+    const t = hydrationTotals();
+    const entries = hydrationDay.entries || [];
+    const listHtml = entries.length ? entries.slice().reverse().map(function(e){
+      return '<div class="food-row">' +
+        '<div class="food-main">' +
+          '<span class="food-name">' + (e.type === 'water' ? 'Water' : 'Caffeine') + '</span>' +
+          '<span class="food-macros mono">' + fmt(e.amount) + (e.type === 'water' ? ' oz' : ' mg') + '</span>' +
+        '</div>' +
+        '<button class="icon-btn" data-del-hydration="' + e.id + '" aria-label="Delete entry">×</button>' +
+      '</div>';
+    }).join('') : '<p class="empty">Nothing logged yet today.</p>';
+
+    el.innerHTML =
+      '<div class="hydration-summary">' +
+        '<div class="hydration-stat"><span class="hydration-stat-label">Water</span><span class="hydration-stat-num mono">' + fmt(t.water) + ' <small>oz</small></span></div>' +
+        '<div class="hydration-stat"><span class="hydration-stat-label">Caffeine</span><span class="hydration-stat-num mono">' + fmt(t.caffeine) + ' <small>mg</small></span></div>' +
+      '</div>' +
+      '<div class="hydration-quick">' +
+        '<div class="hydration-quick-row">' +
+          '<span class="hydration-quick-label">Water</span>' +
+          '<button type="button" class="ghost-btn" data-hydro-quick="water:8">+8 oz</button>' +
+          '<button type="button" class="ghost-btn" data-hydro-quick="water:16">+16 oz</button>' +
+          '<button type="button" class="ghost-btn" data-hydro-quick="water:32">+32 oz</button>' +
+        '</div>' +
+        '<div class="hydration-quick-row">' +
+          '<span class="hydration-quick-label">Caffeine</span>' +
+          '<button type="button" class="ghost-btn" data-hydro-quick="caffeine:95">Coffee 95mg</button>' +
+          '<button type="button" class="ghost-btn" data-hydro-quick="caffeine:47">Tea 47mg</button>' +
+          '<button type="button" class="ghost-btn" data-hydro-quick="caffeine:80">Energy 80mg</button>' +
+        '</div>' +
+      '</div>' +
+      '<form id="hydrationForm" class="food-form">' +
+        '<div class="hydration-form-row">' +
+          '<select name="type" class="text-input">' +
+            '<option value="water">Water (oz)</option>' +
+            '<option value="caffeine">Caffeine (mg)</option>' +
+          '</select>' +
+          '<input type="number" name="amount" placeholder="Amount" min="0" step="1" class="num-input" required>' +
+        '</div>' +
+        '<button type="submit" class="primary-btn">Log</button>' +
+      '</form>' +
+      '<div class="food-list">' + listHtml + '</div>';
+  }
   function renderMeals(){
     const el = document.getElementById('mealsView');
     const rows = savedMeals.length ? savedMeals.map(function(m){
-      const t = mealTotals(m);
       const p = mealPerServing(m);
-      const servings = m.servings || 1;
-      const ingHtml = (m.ingredients||[]).map(function(i){
-        return '<div class="ingredient-row">' +
-          '<span class="ingredient-name">' + escapeHtml(i.name) + '</span>' +
-          '<span class="ingredient-macros mono">' + fmt(i.cal) + ' kcal · P' + fmt(i.protein) + ' · C' + fmt(i.carbs) + ' · F' + fmt(i.fat) + '</span>' +
-          '<button type="button" class="icon-btn" data-del-ingredient="' + i.id + '" data-meal-id="' + m.id + '" aria-label="Remove ingredient">×</button>' +
-        '</div>';
-      }).join('');
-      const servingsRow = '<div class="meal-servings">' +
-        '<label>Servings <input type="number" min="1" step="1" value="' + servings + '" data-servings-meal="' + m.id + '" class="num-input servings-input"></label>' +
-        (servings > 1 ? '<span class="mono meal-batch-total">Batch total: ' + fmt(t.cal) + ' kcal · P' + fmt(t.protein) + ' · C' + fmt(t.carbs) + ' · F' + fmt(t.fat) + '</span>' : '') +
-      '</div>';
+      const expanded = expandedMealIds.has(m.id);
+      let detailHtml = '';
+      if(expanded){
+        const t = mealTotals(m);
+        const servings = m.servings || 1;
+        const ingHtml = (m.ingredients||[]).map(function(i){
+          return '<div class="ingredient-row">' +
+            '<span class="ingredient-name">' + escapeHtml(i.name) + '</span>' +
+            '<span class="ingredient-macros mono">' + fmt(i.cal) + ' kcal · P' + fmt(i.protein) + ' · C' + fmt(i.carbs) + ' · F' + fmt(i.fat) + '</span>' +
+            '<button type="button" class="icon-btn" data-del-ingredient="' + i.id + '" data-meal-id="' + m.id + '" aria-label="Remove ingredient">×</button>' +
+          '</div>';
+        }).join('');
+        detailHtml =
+          '<div class="meal-servings">' +
+            '<label>Servings <input type="number" min="1" step="1" value="' + servings + '" data-servings-meal="' + m.id + '" class="num-input servings-input"></label>' +
+            (servings > 1 ? '<span class="mono meal-batch-total">Batch total: ' + fmt(t.cal) + ' kcal · P' + fmt(t.protein) + ' · C' + fmt(t.carbs) + ' · F' + fmt(t.fat) + '</span>' : '') +
+          '</div>' +
+          '<div class="ingredient-list">' + ingHtml + '</div>' +
+          '<button type="button" class="link-btn" data-add-ingredient="' + m.id + '">+ Add ingredient</button>';
+      }
       return '<div class="meal-card">' +
         '<div class="meal-card-head">' +
           '<span class="food-name">' + escapeHtml(m.name) + '</span>' +
@@ -901,9 +1002,8 @@
           '</div>' +
         '</div>' +
         '<div class="meal-total mono">' + fmt(p.cal) + ' kcal · P' + fmt(p.protein) + ' · C' + fmt(p.carbs) + ' · F' + fmt(p.fat) + ' <span class="meal-per-serving-label">per serving</span></div>' +
-        servingsRow +
-        '<div class="ingredient-list">' + ingHtml + '</div>' +
-        '<button type="button" class="link-btn" data-add-ingredient="' + m.id + '">+ Add ingredient</button>' +
+        detailHtml +
+        '<button type="button" class="link-btn meal-edit-toggle" data-toggle-meal="' + m.id + '">' + (expanded ? 'Done' : 'Edit ingredients') + '</button>' +
       '</div>';
     }).join('') : '<p class="empty">No saved meals yet — tap "New meal" to add one you\'ll reuse.</p>';
     el.innerHTML =
@@ -1173,6 +1273,7 @@
     document.getElementById('dailySubTabs').hidden = currentPage !== 'daily';
     document.getElementById('macrosView').hidden = !(currentPage === 'daily' && activeTab === 'macros');
     document.getElementById('trainingView').hidden = !(currentPage === 'daily' && activeTab === 'training');
+    document.getElementById('hydrationView').hidden = !(currentPage === 'daily' && activeTab === 'hydration');
     document.getElementById('calendarView').hidden = currentPage !== 'calendar';
     document.getElementById('mealsView').hidden = currentPage !== 'meals';
     document.getElementById('statsView').hidden = currentPage !== 'stats';
@@ -1188,6 +1289,7 @@
     renderHeader();
     renderMacros();
     renderTraining();
+    renderHydration();
     applyTabVisibility();
   }
   function switchTab(tab){
@@ -1314,6 +1416,17 @@
     if(e.target.closest('#closeAddIngredient')){ closeAddIngredientModal(); return; }
     const delIngBtn = e.target.closest('[data-del-ingredient]');
     if(delIngBtn){ deleteIngredient(delIngBtn.dataset.mealId, delIngBtn.dataset.delIngredient); return; }
+    const toggleMealBtn = e.target.closest('[data-toggle-meal]');
+    if(toggleMealBtn){ toggleMealExpanded(toggleMealBtn.dataset.toggleMeal); return; }
+
+    const hydroQuickBtn = e.target.closest('[data-hydro-quick]');
+    if(hydroQuickBtn){
+      const parts = hydroQuickBtn.dataset.hydroQuick.split(':');
+      addHydration(parts[0], parseFloat(parts[1]));
+      return;
+    }
+    const delHydroBtn = e.target.closest('[data-del-hydration]');
+    if(delHydroBtn){ deleteHydration(delHydroBtn.dataset.delHydration); return; }
 
     const suggestItem = e.target.closest('[data-suggest-meal]');
     if(suggestItem){
@@ -1498,6 +1611,16 @@
         showToast('Enter at least one measurement', true); return;
       }
       saveBodyStat({day: day, weight: weight, bodyFatPct: bodyFatPct, bmi: bmi, muscleMass: muscleMass});
+      return;
+    }
+    if(e.target.id === 'hydrationForm'){
+      e.preventDefault();
+      const f = e.target;
+      const amount = parseFloat(f.amount.value);
+      if(!amount || amount <= 0){ showToast('Enter an amount', true); return; }
+      addHydration(f.type.value, amount);
+      f.reset();
+      showToast('Logged');
       return;
     }
     if(e.target.id === 'exerciseForm'){
