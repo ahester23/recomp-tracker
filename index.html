@@ -184,7 +184,7 @@
   .progress-head h3{margin:0;font-size:16px;font-weight:600;}
 
   /* Training */
-  .training-actions{display:flex;justify-content:flex-end;margin-bottom:6px;}
+  .training-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;}
   .barbell{position:relative;display:flex;justify-content:space-between;align-items:center;margin:10px 4px 22px;padding:0 4px;}
   .bar-line{position:absolute;left:4px;right:4px;top:22px;height:3px;background:var(--line);z-index:0;}
   .plate-wrap{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;}
@@ -424,6 +424,7 @@
   let targets = {calories:1800, protein:125, carbs:210, fat:50};
   let macroDay = {entries:[]};
   let showFoodForm = false;
+  let showExerciseForm = false;
   let habits = [];
   let habitDay = {};
   let dayReminders = [];
@@ -1371,18 +1372,22 @@
 
     el.innerHTML =
       renderBarbellHtml() +
-      '<div class="training-actions"><button type="button" id="editSplitBtn" class="ghost-btn">Edit split</button></div>' +
+      '<div class="training-actions">' +
+        '<button type="button" id="editSplitBtn" class="ghost-btn">Edit split</button>' +
+        '<button type="button" id="toggleExerciseFormBtn" class="ghost-btn">' + (showExerciseForm ? 'Cancel' : '+ Add exercise') + '</button>' +
+      '</div>' +
       '<h2 class="day-heading">' + escapeHtml(dayFull) + '</h2>' +
       '<div class="exercise-list">' + exercisesHtml + '</div>' +
-      '<form id="exerciseForm" class="exercise-form">' +
-        '<input type="text" id="exerciseName" name="exerciseName" placeholder="Exercise (e.g., Barbell Squat)" autocomplete="off" list="exerciseSuggestions" class="text-input" required>' +
-        datalistHtml +
-        '<div id="setsBuilder" class="sets-builder"></div>' +
-        '<div class="form-row">' +
-          '<button type="button" id="addSetBtn" class="ghost-btn">+ Add set</button>' +
-          '<button type="submit" class="primary-btn">Save exercise</button>' +
-        '</div>' +
-      '</form>' +
+      (showExerciseForm ?
+        '<form id="exerciseForm" class="exercise-form">' +
+          '<input type="text" id="exerciseName" name="exerciseName" placeholder="Exercise (e.g., Barbell Squat)" autocomplete="off" list="exerciseSuggestions" class="text-input" required>' +
+          datalistHtml +
+          '<div id="setsBuilder" class="sets-builder"></div>' +
+          '<div class="form-row">' +
+            '<button type="button" id="addSetBtn" class="ghost-btn">+ Add set</button>' +
+            '<button type="submit" class="primary-btn">Save exercise</button>' +
+          '</div>' +
+        '</form>' : '') +
       '<div id="progressPanel" class="progress-panel" hidden></div>';
 
     renderSetsBuilder();
@@ -1617,6 +1622,10 @@
     showFoodForm = !showFoodForm;
     renderMacros();
   }
+  function toggleExerciseForm(){
+    showExerciseForm = !showExerciseForm;
+    renderTraining();
+  }
   function openTargetsModal(){
     renderTargetsForm();
     const m = document.getElementById('targetsModal');
@@ -1700,6 +1709,7 @@
     if(e.target.closest('#editTargetsBtn')){ openTargetsModal(); return; }
     if(e.target.closest('#toggleFoodFormBtn')){ toggleFoodForm(); return; }
     if(e.target.closest('#editSplitBtn')){ openSplitModal(); return; }
+    if(e.target.closest('#toggleExerciseFormBtn')){ toggleExerciseForm(); return; }
     if(e.target.closest('#closeSplit')){ closeSplitModal(); return; }
     if(e.target.closest('#closeTargets')){ closeTargetsModal(); return; }
     if(e.target.closest('#prevDay')){ changeDate(-1); return; }
@@ -2007,6 +2017,7 @@
         .filter(function(s){ return s.weight!=='' && s.reps!=='' && !isNaN(s.weight) && !isNaN(s.reps); })
         .map(function(s){ return {weight: parseFloat(s.weight), reps: parseInt(s.reps,10)}; });
       if(!name || validSets.length===0){ showToast('Add an exercise name and at least one complete set', true); return; }
+      showExerciseForm = false;
       saveExercise(name, validSets).then(function(){
         showToast('Exercise logged');
       });
