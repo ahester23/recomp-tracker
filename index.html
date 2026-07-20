@@ -226,6 +226,22 @@
   .trend.down{color:var(--plate-red);}
   .trend.flat{color:var(--steel);}
 
+  /* Reminders */
+  .reminder-banner{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+  .reminder-banner[hidden]{display:none;}
+  .reminder-item{display:flex;align-items:center;gap:10px;background:var(--plate-gold);color:var(--ink);border-radius:5px;padding:10px 12px;font-size:13px;font-weight:600;cursor:pointer;}
+  .reminder-item.done{background:var(--chalk);color:var(--steel);font-weight:500;}
+  .reminder-item.done .reminder-text{text-decoration:line-through;}
+  .reminder-checkbox{width:17px;height:17px;flex-shrink:0;accent-color:var(--ink);cursor:pointer;}
+  .reminder-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .reminder-text{flex:1;}
+  .reminder-meta{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;opacity:.75;}
+  .cal-reminder-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;margin-bottom:6px;}
+  .cal-reminder-label{display:flex;align-items:center;gap:8px;cursor:pointer;}
+  .cal-reminder-main{display:flex;flex-direction:column;gap:1px;}
+  .cal-reminder-meta{font-size:10px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;}
+  .cal-reminder-row.done .cal-reminder-text{text-decoration:line-through;color:var(--steel);}
+
   /* Calendar */
   .cal-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px;}
   .cal-nav button{background:none;border:1px solid var(--line);color:var(--chalk);width:30px;height:30px;border-radius:3px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
@@ -316,6 +332,7 @@
       <button id="nextDay" aria-label="Next day">›</button>
       <button id="todayBtn" hidden>Today</button>
     </div>
+    <div id="reminderBanner" class="reminder-banner" hidden></div>
     <nav class="tabs" id="dailySubTabs">
       <button class="tab active" data-tab="macros">Macros</button>
       <button class="tab" data-tab="training">Training</button>
@@ -356,6 +373,12 @@
     <form id="habitForm"></form>
   </div>
 </div>
+<div id="reminderModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="progress-head"><h3>Schedule reminder/task</h3><button type="button" id="closeReminder" class="icon-btn" aria-label="Close">×</button></div>
+    <form id="reminderForm"></form>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -387,6 +410,7 @@
   let macroDay = {entries:[]};
   let habits = [];
   let habitDay = {};
+  let dayReminders = [];
   let workoutDay = {dayIndex:0, exercises:[]};
   let lastDayIndex = -1;
   let exerciseIndex = [];
@@ -503,12 +527,16 @@
   }
   async function loadDateData(){
     const key = currentKey();
-    const [foodRes, workoutRes, exRes, habitEntriesRes] = await Promise.all([
+    const [foodRes, workoutRes, exRes, habitEntriesRes, reminderRes] = await Promise.all([
       sb.from('food_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
       sb.from('workout_days').select('*').eq('user_id', userId).eq('day', key).maybeSingle(),
       sb.from('exercises').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
-      sb.from('habit_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true})
+      sb.from('habit_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
+      sb.from('reminders').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true})
     ]);
+    dayReminders = (reminderRes.data || []).map(function(r){
+      return {id:r.id, text:r.text, completed:r.completed, kind:r.kind, time:r.time_of_day};
+    });
     macroDay = { entries: (foodRes.data || []).map(function(r){
       return {id:r.id, name:r.name, cal:r.cal, protein:r.protein, carbs:r.carbs, fat:r.fat};
     }) };
@@ -580,6 +608,63 @@
   function toggleCheckinHabit(habitId){
     const done = (habitDay[habitId] || 0) > 0;
     setHabitAmount(habitId, done ? 0 : 1);
+  }
+  async function addReminder(day, text, kind, time){
+    const { data, error } = await sb.from('reminders').insert({
+      user_id: userId, day: day, text: text, kind: kind || 'reminder', time_of_day: time || null
+    }).select().single();
+    if(error){ showToast('Could not save reminder — try again', true); return; }
+    if(day === currentKey()){
+      dayReminders.push({id:data.id, text:data.text, completed:data.completed, kind:data.kind, time:data.time_of_day});
+      renderReminderBanner();
+    }
+    if(currentPage === 'calendar'){ await loadCalendarMonth(); renderCalendar(); }
+  }
+  async function toggleReminder(id){
+    const r = dayReminders.find(function(x){ return x.id === id; });
+    if(!r) return;
+    const prev = r.completed;
+    r.completed = !r.completed;
+    renderReminderBanner();
+    const { error } = await sb.from('reminders').update({completed: r.completed}).eq('id', id).eq('user_id', userId);
+    if(error){ r.completed = prev; renderReminderBanner(); showToast('Could not update — try again', true); return; }
+    const info = calData[currentKey()];
+    if(info){
+      const cr = (info.reminders||[]).find(function(x){ return x.id === id; });
+      if(cr) cr.completed = r.completed;
+    }
+  }
+  async function toggleReminderCal(day, id){
+    const info = calData[day];
+    if(!info) return;
+    const r = (info.reminders||[]).find(function(x){ return x.id === id; });
+    if(!r) return;
+    const prev = r.completed;
+    r.completed = !r.completed;
+    renderCalendar();
+    const { error } = await sb.from('reminders').update({completed: r.completed}).eq('id', id).eq('user_id', userId);
+    if(error){ r.completed = prev; renderCalendar(); showToast('Could not update — try again', true); return; }
+    if(day === currentKey()){
+      const dr = dayReminders.find(function(x){ return x.id === id; });
+      if(dr){ dr.completed = r.completed; renderReminderBanner(); }
+    }
+  }
+  async function deleteReminder(day, id){
+    const info = calData[day];
+    const prevCal = info ? info.reminders.slice() : null;
+    if(info) info.reminders = info.reminders.filter(function(x){ return x.id !== id; });
+    const prevDay = dayReminders.slice();
+    if(day === currentKey()) dayReminders = dayReminders.filter(function(x){ return x.id !== id; });
+    renderCalendar();
+    if(day === currentKey()) renderReminderBanner();
+    const { error } = await sb.from('reminders').delete().eq('id', id).eq('user_id', userId);
+    if(error){
+      if(info) info.reminders = prevCal;
+      dayReminders = prevDay;
+      renderCalendar();
+      if(day === currentKey()) renderReminderBanner();
+      showToast('Could not delete — try again', true);
+    }
   }
   async function saveTargets(t){
     targets = t;
@@ -714,15 +799,16 @@
     const y = calMonthDate.getFullYear(), m = calMonthDate.getMonth();
     const startKey = formatKey(new Date(y, m, 1));
     const endKey = formatKey(new Date(y, m, daysInMonth(y, m)));
-    const [foodRes, workoutRes, exRes, habitRes] = await Promise.all([
+    const [foodRes, workoutRes, exRes, habitRes, reminderRes] = await Promise.all([
       sb.from('food_entries').select('day,cal').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
       sb.from('workout_days').select('day,day_index').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
       sb.from('exercises').select('day,name,sets').eq('user_id', userId).gte('day', startKey).lte('day', endKey).order('created_at', {ascending:true}),
-      sb.from('habit_entries').select('day,habit_id,amount').eq('user_id', userId).gte('day', startKey).lte('day', endKey)
+      sb.from('habit_entries').select('day,habit_id,amount').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
+      sb.from('reminders').select('day,id,text,completed,kind,time_of_day').eq('user_id', userId).gte('day', startKey).lte('day', endKey).order('created_at', {ascending:true})
     ]);
     const data = {};
     function bucket(key){
-      if(!data[key]) data[key] = {cal:0, dayIndex:null, exercises:[], habits:{}};
+      if(!data[key]) data[key] = {cal:0, dayIndex:null, exercises:[], habits:{}, reminders:[]};
       return data[key];
     }
     (foodRes.data||[]).forEach(function(r){ bucket(r.day).cal += (r.cal||0); });
@@ -731,6 +817,9 @@
     (habitRes.data||[]).forEach(function(r){
       const b = bucket(r.day);
       b.habits[r.habit_id] = (b.habits[r.habit_id] || 0) + (r.amount||0);
+    });
+    (reminderRes.data||[]).forEach(function(r){
+      bucket(r.day).reminders.push({id:r.id, text:r.text, completed:r.completed, kind:r.kind, time:r.time_of_day});
     });
     calData = data;
   }
@@ -958,6 +1047,41 @@
       '</form>' +
       '<div class="food-list">' + listHtml + '</div>';
   }
+  function sortReminders(list){
+    return (list||[]).slice().sort(function(a,b){
+      if(a.time && b.time) return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0);
+      if(a.time) return -1;
+      if(b.time) return 1;
+      return 0;
+    });
+  }
+  function formatTimeLabel(t){
+    if(!t) return '';
+    const parts = t.split(':');
+    let h = parseInt(parts[0],10);
+    const m = parts[1];
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if(h === 0) h = 12;
+    return h + ':' + m + ' ' + ampm;
+  }
+  function reminderMetaLabel(r){
+    return (r.time ? formatTimeLabel(r.time) + ' · ' : '') + (r.kind === 'task' ? 'Task' : 'Reminder');
+  }
+  function renderReminderBanner(){
+    const el = document.getElementById('reminderBanner');
+    if(!el) return;
+    if(!dayReminders || !dayReminders.length){ el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = sortReminders(dayReminders).map(function(r){
+      return '<label class="reminder-item' + (r.completed ? ' done' : '') + '">' +
+        '<input type="checkbox" class="reminder-checkbox" data-toggle-reminder="' + r.id + '"' + (r.completed ? ' checked' : '') + '>' +
+        '<span class="reminder-main">' +
+          '<span class="reminder-text">' + escapeHtml(r.text) + '</span>' +
+          '<span class="reminder-meta mono">' + reminderMetaLabel(r) + '</span>' +
+        '</span>' +
+      '</label>';
+    }).join('');
+  }
   const HABIT_PALETTE = ['plate-red','plate-gold','plate-blue','plate-green'];
   function habitColor(index){ return 'var(--' + HABIT_PALETTE[index % HABIT_PALETTE.length] + ')'; }
   function renderHabits(){
@@ -1034,6 +1158,21 @@
     const isQuantity = sel.value !== 'checkbox';
     fields.hidden = !isQuantity;
     if(hint) hint.hidden = isQuantity;
+  }
+  function renderReminderForm(dateKey){
+    const f = document.getElementById('reminderForm');
+    if(!f) return;
+    f.innerHTML =
+      '<label class="modal-label">Date<input type="date" name="day" value="' + dateKey + '" class="num-input" required></label>' +
+      '<label class="modal-label">Type' +
+        '<select name="kind" class="text-input">' +
+          '<option value="reminder">Reminder</option>' +
+          '<option value="task">Task</option>' +
+        '</select>' +
+      '</label>' +
+      '<label class="modal-label">Time (optional)<input type="time" name="time" class="num-input"></label>' +
+      '<label class="modal-label">Details<input type="text" name="text" class="text-input" placeholder="e.g., Buy protein powder" required></label>' +
+      '<button type="submit" class="primary-btn full">Save</button>';
   }
   function renderMeals(){
     const el = document.getElementById('mealsView');
@@ -1281,7 +1420,7 @@
     if(!calSelectedKey){
       return '<p class="empty">Tap a day to see what was logged.</p>';
     }
-    const info = calData[calSelectedKey] || {cal:0, dayIndex:null, exercises:[], habits:{}};
+    const info = calData[calSelectedKey] || {cal:0, dayIndex:null, exercises:[], habits:{}, reminders:[]};
     const splitLabel = (info.dayIndex === null || info.dayIndex === undefined) ? 'No split assigned' : DAY_LABELS[info.dayIndex];
     const exHtml = info.exercises.length ? info.exercises.map(function(ex){
       const setsStr = ex.sets.map(function(s){ return s.weight + '×' + s.reps; }).join('  ·  ');
@@ -1295,12 +1434,30 @@
       else { statusStr = val > 0 ? fmt(val) + ' ' + escapeHtml(h.unit) : '—'; }
       return '<div class="cal-exercise-row">' + escapeHtml(h.name) + ' <span class="mono">' + statusStr + '</span></div>';
     }).join('') + '</div>' : '';
+    const reminders = sortReminders(info.reminders || []);
+    const reminderRowsHtml = reminders.length ? reminders.map(function(r){
+      return '<div class="cal-reminder-row' + (r.completed ? ' done' : '') + '">' +
+        '<label class="cal-reminder-label">' +
+          '<input type="checkbox" data-toggle-reminder-cal="' + calSelectedKey + ':' + r.id + '"' + (r.completed ? ' checked' : '') + '>' +
+          '<span class="cal-reminder-main">' +
+            '<span class="cal-reminder-text">' + escapeHtml(r.text) + '</span>' +
+            '<span class="cal-reminder-meta">' + reminderMetaLabel(r) + '</span>' +
+          '</span>' +
+        '</label>' +
+        '<button type="button" class="icon-btn" data-del-reminder="' + calSelectedKey + ':' + r.id + '" aria-label="Delete reminder">×</button>' +
+      '</div>';
+    }).join('') : '<p class="empty">No reminders or tasks scheduled.</p>';
+    const remindersHtml = '<div class="cal-habits"><div class="cal-habits-label">Reminders &amp; Tasks</div>' +
+      reminderRowsHtml +
+      '<button type="button" class="link-btn" id="calAddReminderBtn">+ Add reminder/task</button>' +
+    '</div>';
     return '<div class="cal-detail">' +
       '<div class="cal-detail-head"><h3>' + escapeHtml(formatShort(calSelectedKey)) + '</h3><button type="button" id="calGotoDay" class="link-btn">Open day →</button></div>' +
       '<div class="cal-detail-split">' + escapeHtml(splitLabel) + '</div>' +
       '<div class="cal-detail-macros mono">' + fmt(info.cal) + ' kcal logged</div>' +
       exHtml +
       habitsHtml +
+      remindersHtml +
     '</div>';
   }
   function renderCalendar(){
@@ -1341,6 +1498,7 @@
         '<button type="button" id="calNextMonth" aria-label="Next month">›</button>' +
       '</div>' +
       legendHtml +
+      '<button type="button" id="addReminderBtn" class="ghost-btn" style="margin-bottom:14px;">+ Schedule reminder/task</button>' +
       '<div class="cal-grid">' + dowHtml + cells + '</div>' +
       '<div id="calDetail">' + calDetailHtml() + '</div>';
   }
@@ -1349,6 +1507,7 @@
   function applyTabVisibility(){
     document.getElementById('dateNav').hidden = currentPage !== 'daily';
     document.getElementById('dailySubTabs').hidden = currentPage !== 'daily';
+    document.getElementById('reminderBanner').hidden = currentPage !== 'daily' || !(dayReminders && dayReminders.length);
     document.getElementById('macrosView').hidden = !(currentPage === 'daily' && activeTab === 'macros');
     document.getElementById('trainingView').hidden = !(currentPage === 'daily' && activeTab === 'training');
     document.getElementById('habitsView').hidden = !(currentPage === 'daily' && activeTab === 'habits');
@@ -1368,6 +1527,7 @@
     renderMacros();
     renderTraining();
     renderHabits();
+    renderReminderBanner();
     applyTabVisibility();
   }
   function switchTab(tab){
@@ -1434,6 +1594,15 @@
     if(m) m.hidden = true;
     addIngredientMealId = null;
   }
+  function openReminderModal(dateKey){
+    renderReminderForm(dateKey || calSelectedKey || formatKey(startOfDay(new Date())));
+    const m = document.getElementById('reminderModal');
+    if(m) m.hidden = false;
+  }
+  function closeReminderModal(){
+    const m = document.getElementById('reminderModal');
+    if(m) m.hidden = true;
+  }
   function openHabitModal(){
     renderHabitForm();
     const m = document.getElementById('habitModal');
@@ -1488,6 +1657,16 @@
     if(e.target.closest('#calPrevMonth')){ changeCalMonth(-1); return; }
     if(e.target.closest('#calNextMonth')){ changeCalMonth(1); return; }
     if(e.target.closest('#calGotoDay')){ gotoCalDay(); return; }
+
+    if(e.target.closest('#addReminderBtn')){ openReminderModal(calSelectedKey); return; }
+    if(e.target.closest('#calAddReminderBtn')){ openReminderModal(calSelectedKey); return; }
+    if(e.target.closest('#closeReminder')){ closeReminderModal(); return; }
+    const delReminderBtn = e.target.closest('[data-del-reminder]');
+    if(delReminderBtn){
+      const parts = delReminderBtn.dataset.delReminder.split(':');
+      deleteReminder(parts[0], parts[1]);
+      return;
+    }
 
     const quickAddBtn = e.target.closest('[data-quick-add]');
     if(quickAddBtn){ quickAddSavedMeal(quickAddBtn.dataset.quickAdd); return; }
@@ -1590,6 +1769,13 @@
     }
     if(t.matches('[data-habit-slider]')){
       setHabitAmount(t.dataset.habitSlider, parseFloat(t.value) || 0);
+    }
+    if(t.matches('[data-toggle-reminder]')){
+      toggleReminder(t.dataset.toggleReminder);
+    }
+    if(t.matches('[data-toggle-reminder-cal]')){
+      const parts = t.dataset.toggleReminderCal.split(':');
+      toggleReminderCal(parts[0], parts[1]);
     }
   });
 
@@ -1728,6 +1914,19 @@
       addHabit(name, method, unit, goal, step);
       closeHabitModal();
       showToast('Habit added');
+      return;
+    }
+    if(e.target.id === 'reminderForm'){
+      e.preventDefault();
+      const f = e.target;
+      const day = f.day.value;
+      const text = f.text.value.trim();
+      const kind = f.kind.value === 'task' ? 'task' : 'reminder';
+      const time = f.time.value || null;
+      if(!day || !text){ showToast('Add a date and details', true); return; }
+      addReminder(day, text, kind, time);
+      closeReminderModal();
+      showToast((kind === 'task' ? 'Task' : 'Reminder') + ' scheduled');
       return;
     }
     if(e.target.id === 'exerciseForm'){
