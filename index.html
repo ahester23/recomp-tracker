@@ -185,9 +185,6 @@
 
   /* Training */
   .training-actions{display:flex;justify-content:flex-end;margin-bottom:6px;}
-  .split-row{display:flex;gap:8px;align-items:flex-start;}
-  .split-full{flex:2;}
-  .split-short{flex:1;}
   .barbell{position:relative;display:flex;justify-content:space-between;align-items:center;margin:10px 4px 22px;padding:0 4px;}
   .bar-line{position:absolute;left:4px;right:4px;top:22px;height:3px;background:var(--line);z-index:0;}
   .plate-wrap{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;}
@@ -401,11 +398,13 @@
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   const DEFAULT_DAY_LABELS = ['Back & Biceps','Legs & Glutes','Shoulders','Legs & Glutes','Abs','Legs & Glutes','Rest Day'];
-  const DEFAULT_DAY_SHORT  = ['Back/Bi','Legs','Shoulders','Legs','Abs','Legs','Rest'];
   const DAY_COLOR  = ['plate-red','plate-blue','plate-gold','plate-blue','plate-green','plate-blue','steel-dim'];
   const NUM_DAYS = DEFAULT_DAY_LABELS.length;
   let dayLabels = DEFAULT_DAY_LABELS.slice();
-  let dayShort = DEFAULT_DAY_SHORT.slice();
+  function shortLabelFor(full){
+    const word = (full||'').trim().split(/\s+/)[0] || '';
+    return word.length > 10 ? word.slice(0,10) : word;
+  }
   function buildCalLegend(){
     const seen = {};
     const legend = [];
@@ -534,19 +533,17 @@
       lastDayIndex = data.last_day_index;
       if(data.split && Array.isArray(data.split.full) && data.split.full.length === NUM_DAYS){
         dayLabels = data.split.full.slice();
-        dayShort = (Array.isArray(data.split.short) && data.split.short.length === NUM_DAYS) ? data.split.short.slice() : data.split.full.map(function(l){ return l.slice(0,10); });
       }
     } else {
       const { error: insErr } = await sb.from('settings').insert({user_id: userId, targets: targets, last_day_index: -1});
       if(insErr) showToast('Could not save — try again', true);
     }
   }
-  async function saveSplit(fullArr, shortArr){
+  async function saveSplit(fullArr){
     dayLabels = fullArr;
-    dayShort = shortArr;
     renderTraining();
     if(currentPage === 'calendar') renderCalendar();
-    const { error } = await sb.from('settings').update({split: {full: fullArr, short: shortArr}, updated_at: new Date().toISOString()}).eq('user_id', userId);
+    const { error } = await sb.from('settings').update({split: {full: fullArr}, updated_at: new Date().toISOString()}).eq('user_id', userId);
     if(error) showToast('Could not save split — try again', true);
     else showToast('Split updated');
   }
@@ -1323,12 +1320,8 @@
     const f = document.getElementById('splitForm');
     if(!f) return;
     f.innerHTML = dayLabels.map(function(label, i){
-      return '<div class="split-row">' +
-        '<label class="modal-label split-full">Day ' + (i+1) +
-          '<input type="text" data-split-field="full" data-split-index="' + i + '" value="' + escapeHtml(label) + '" class="text-input" required></label>' +
-        '<label class="modal-label split-short">Tag' +
-          '<input type="text" data-split-field="short" data-split-index="' + i + '" value="' + escapeHtml(dayShort[i]) + '" class="text-input" maxlength="10" required></label>' +
-      '</div>';
+      return '<label class="modal-label">Day ' + (i+1) +
+        '<input type="text" data-split-index="' + i + '" value="' + escapeHtml(label) + '" class="text-input" required></label>';
     }).join('') + '<button type="submit" class="primary-btn full">Save split</button>';
   }
 
@@ -1338,7 +1331,7 @@
     for(let i=0;i<NUM_DAYS;i++){
       plates += '<div class="plate-wrap">' +
         '<button type="button" class="plate' + (workoutDay.dayIndex===i?' active':'') + '" data-plate="' + i + '" aria-label="' + dayLabels[i] + '"></button>' +
-        '<span class="plate-label">' + dayShort[i] + '</span>' +
+        '<span class="plate-label">' + escapeHtml(shortLabelFor(dayLabels[i])) + '</span>' +
       '</div>';
     }
     return '<div class="barbell"><div class="bar-line"></div>' + plates + '</div>';
@@ -1912,15 +1905,12 @@
       e.preventDefault();
       const f = e.target;
       const fullArr = dayLabels.slice();
-      const shortArr = dayShort.slice();
-      Array.prototype.forEach.call(f.querySelectorAll('[data-split-field]'), function(input){
+      Array.prototype.forEach.call(f.querySelectorAll('[data-split-index]'), function(input){
         const i = parseInt(input.dataset.splitIndex, 10);
         const val = input.value.trim();
-        if(!val){ return; }
-        if(input.dataset.splitField === 'full') fullArr[i] = val;
-        else shortArr[i] = val;
+        if(val) fullArr[i] = val;
       });
-      saveSplit(fullArr, shortArr);
+      saveSplit(fullArr);
       closeSplitModal();
       return;
     }
