@@ -134,17 +134,10 @@
   .save-meal-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--steel);cursor:pointer;}
   .save-meal-check input{width:auto;accent-color:var(--plate-gold);}
 
-  .hydration-summary{display:flex;gap:14px;margin-bottom:18px;}
-  .hydration-stat{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;text-align:center;}
-  .hydration-stat-label{display:block;font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
-  .hydration-stat-num{font-size:22px;font-weight:600;}
-  .hydration-stat-num small{font-size:12px;color:var(--steel);font-weight:500;}
-  .hydration-quick{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
-  .hydration-quick-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .hydration-quick-label{font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;width:60px;flex-shrink:0;}
-  .hydration-form-row{display:flex;gap:8px;}
-  .hydration-form-row select{flex:1;}
-  .hydration-form-row input{flex:1;}
+  .habit-checkin-btn{width:100%;}
+  .habit-log-form{display:flex;gap:8px;margin-bottom:8px;}
+  .habit-log-form input{flex:1;}
+  .habit-empty-hint{color:var(--steel);font-size:11px;margin-top:2px;}
 
   .meal-card{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:12px 14px;}
   .meal-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px;}
@@ -251,6 +244,8 @@
   .cal-detail-head h3{margin:0;font-size:16px;font-weight:600;}
   .cal-detail-split{font-size:12px;color:var(--steel);margin-bottom:12px;}
   .cal-detail-macros{margin-bottom:14px;font-size:12.5px;}
+  .cal-habits{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);}
+  .cal-habits-label{font-size:11px;color:var(--steel);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;}
   .cal-exercise-row{font-size:12.5px;margin-bottom:6px;}
   .cal-exercise-row .mono{color:var(--steel);}
 
@@ -319,13 +314,13 @@
     <nav class="tabs" id="dailySubTabs">
       <button class="tab active" data-tab="macros">Macros</button>
       <button class="tab" data-tab="training">Training</button>
-      <button class="tab" data-tab="hydration">Hydration</button>
+      <button class="tab" data-tab="habits">Habits</button>
     </nav>
   </header>
   <main>
     <section id="macrosView"><p class="empty">Loading…</p></section>
     <section id="trainingView" hidden><p class="empty">Loading…</p></section>
-    <section id="hydrationView" hidden><p class="empty">Loading…</p></section>
+    <section id="habitsView" hidden><p class="empty">Loading…</p></section>
     <section id="calendarView" hidden><p class="empty">Loading…</p></section>
     <section id="mealsView" hidden><p class="empty">Loading…</p></section>
     <section id="statsView" hidden><p class="empty">Loading…</p></section>
@@ -348,6 +343,12 @@
   <div class="modal-card">
     <div class="progress-head"><h3>Add ingredient</h3><button type="button" id="closeAddIngredient" class="icon-btn" aria-label="Close">×</button></div>
     <form id="addIngredientForm"></form>
+  </div>
+</div>
+<div id="habitModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="progress-head"><h3>New habit</h3><button type="button" id="closeHabit" class="icon-btn" aria-label="Close">×</button></div>
+    <form id="habitForm"></form>
   </div>
 </div>
 <div id="toast"></div>
@@ -379,7 +380,8 @@
   let currentPage = 'daily';
   let targets = {calories:1800, protein:125, carbs:210, fat:50};
   let macroDay = {entries:[]};
-  let hydrationDay = {entries:[]};
+  let habits = [];
+  let habitDay = {};
   let workoutDay = {dayIndex:0, exercises:[]};
   let lastDayIndex = -1;
   let exerciseIndex = [];
@@ -456,6 +458,7 @@
     await ensureSettingsRow();
     await loadExerciseIndex();
     await loadSavedMeals();
+    await loadHabits();
     await loadDateData();
     render();
   }
@@ -495,11 +498,11 @@
   }
   async function loadDateData(){
     const key = currentKey();
-    const [foodRes, workoutRes, exRes, hydrationRes] = await Promise.all([
+    const [foodRes, workoutRes, exRes, habitEntriesRes] = await Promise.all([
       sb.from('food_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
       sb.from('workout_days').select('*').eq('user_id', userId).eq('day', key).maybeSingle(),
       sb.from('exercises').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true}),
-      sb.from('hydration_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true})
+      sb.from('habit_entries').select('*').eq('user_id', userId).eq('day', key).order('created_at', {ascending:true})
     ]);
     macroDay = { entries: (foodRes.data || []).map(function(r){
       return {id:r.id, name:r.name, cal:r.cal, protein:r.protein, carbs:r.carbs, fat:r.fat};
@@ -508,9 +511,12 @@
     workoutDay = { dayIndex: dayIndex, exercises: (exRes.data || []).map(function(r){
       return {id:r.id, name:r.name, sets:r.sets};
     }) };
-    hydrationDay = { entries: (hydrationRes.data || []).map(function(r){
-      return {id:r.id, type:r.type, amount:r.amount};
-    }) };
+    const byHabit = {};
+    (habitEntriesRes.data || []).forEach(function(r){
+      if(!byHabit[r.habit_id]) byHabit[r.habit_id] = [];
+      byHabit[r.habit_id].push({id:r.id, amount:r.amount});
+    });
+    habitDay = byHabit;
     pendingSets = [{weight:'',reps:''}];
   }
 
@@ -531,20 +537,45 @@
     const { error } = await sb.from('food_entries').delete().eq('id', id).eq('user_id', userId);
     if(error){ macroDay.entries = prev; renderMacros(); showToast('Could not delete — try again', true); }
   }
-  async function addHydration(type, amount){
-    const { data, error } = await sb.from('hydration_entries').insert({
-      user_id: userId, day: currentKey(), type: type, amount: amount
+  async function loadHabits(){
+    const { data, error } = await sb.from('habits').select('*').eq('user_id', userId).order('created_at', {ascending:true});
+    if(error){ habits = []; return; }
+    habits = data || [];
+  }
+  async function addHabit(name, unit){
+    const { data, error } = await sb.from('habits').insert({user_id: userId, name: name, unit: unit || null}).select().single();
+    if(error){ showToast('Could not save — try again', true); return; }
+    habits.push(data);
+    renderHabits();
+  }
+  async function deleteHabit(id){
+    const prev = habits;
+    habits = habits.filter(function(h){ return h.id !== id; });
+    delete habitDay[id];
+    renderHabits();
+    const { error } = await sb.from('habits').delete().eq('id', id).eq('user_id', userId);
+    if(error){ habits = prev; renderHabits(); showToast('Could not delete — try again', true); }
+  }
+  async function logHabit(habitId, amount){
+    const { data, error } = await sb.from('habit_entries').insert({
+      user_id: userId, habit_id: habitId, day: currentKey(), amount: amount
     }).select().single();
     if(error){ showToast('Could not save — try again', true); return; }
-    hydrationDay.entries.push({id:data.id, type:data.type, amount:data.amount});
-    renderHydration();
+    if(!habitDay[habitId]) habitDay[habitId] = [];
+    habitDay[habitId].push({id:data.id, amount:data.amount});
+    renderHabits();
   }
-  async function deleteHydration(id){
-    const prev = hydrationDay.entries;
-    hydrationDay.entries = hydrationDay.entries.filter(function(e){ return e.id !== id; });
-    renderHydration();
-    const { error } = await sb.from('hydration_entries').delete().eq('id', id).eq('user_id', userId);
-    if(error){ hydrationDay.entries = prev; renderHydration(); showToast('Could not delete — try again', true); }
+  async function deleteHabitEntry(habitId, entryId){
+    const prev = habitDay[habitId];
+    habitDay[habitId] = (habitDay[habitId]||[]).filter(function(e){ return e.id !== entryId; });
+    renderHabits();
+    const { error } = await sb.from('habit_entries').delete().eq('id', entryId).eq('user_id', userId);
+    if(error){ habitDay[habitId] = prev; renderHabits(); showToast('Could not delete — try again', true); }
+  }
+  function toggleCheckinHabit(habitId){
+    const entries = habitDay[habitId] || [];
+    if(entries.length){ deleteHabitEntry(habitId, entries[0].id); }
+    else { logHabit(habitId, 1); }
   }
   async function saveTargets(t){
     targets = t;
@@ -679,19 +710,24 @@
     const y = calMonthDate.getFullYear(), m = calMonthDate.getMonth();
     const startKey = formatKey(new Date(y, m, 1));
     const endKey = formatKey(new Date(y, m, daysInMonth(y, m)));
-    const [foodRes, workoutRes, exRes] = await Promise.all([
+    const [foodRes, workoutRes, exRes, habitRes] = await Promise.all([
       sb.from('food_entries').select('day,cal').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
       sb.from('workout_days').select('day,day_index').eq('user_id', userId).gte('day', startKey).lte('day', endKey),
-      sb.from('exercises').select('day,name,sets').eq('user_id', userId).gte('day', startKey).lte('day', endKey).order('created_at', {ascending:true})
+      sb.from('exercises').select('day,name,sets').eq('user_id', userId).gte('day', startKey).lte('day', endKey).order('created_at', {ascending:true}),
+      sb.from('habit_entries').select('day,habit_id,amount').eq('user_id', userId).gte('day', startKey).lte('day', endKey)
     ]);
     const data = {};
     function bucket(key){
-      if(!data[key]) data[key] = {cal:0, dayIndex:null, exercises:[]};
+      if(!data[key]) data[key] = {cal:0, dayIndex:null, exercises:[], habits:{}};
       return data[key];
     }
     (foodRes.data||[]).forEach(function(r){ bucket(r.day).cal += (r.cal||0); });
     (workoutRes.data||[]).forEach(function(r){ bucket(r.day).dayIndex = r.day_index; });
     (exRes.data||[]).forEach(function(r){ bucket(r.day).exercises.push({name:r.name, sets:r.sets}); });
+    (habitRes.data||[]).forEach(function(r){
+      const b = bucket(r.day);
+      b.habits[r.habit_id] = (b.habits[r.habit_id] || 0) + (r.amount||0);
+    });
     calData = data;
   }
   async function changeCalMonth(delta){
@@ -918,58 +954,55 @@
       '</form>' +
       '<div class="food-list">' + listHtml + '</div>';
   }
-  function hydrationTotals(){
-    return (hydrationDay.entries||[]).reduce(function(acc, e){
-      if(e.type === 'water') acc.water += e.amount||0;
-      else if(e.type === 'caffeine') acc.caffeine += e.amount||0;
-      return acc;
-    }, {water:0, caffeine:0});
+  function habitTotal(habitId){
+    return (habitDay[habitId]||[]).reduce(function(sum, e){ return sum + (e.amount||0); }, 0);
   }
-  function renderHydration(){
-    const el = document.getElementById('hydrationView');
+  function renderHabits(){
+    const el = document.getElementById('habitsView');
     if(!el) return;
-    const t = hydrationTotals();
-    const entries = hydrationDay.entries || [];
-    const listHtml = entries.length ? entries.slice().reverse().map(function(e){
-      return '<div class="food-row">' +
-        '<div class="food-main">' +
-          '<span class="food-name">' + (e.type === 'water' ? 'Water' : 'Caffeine') + '</span>' +
-          '<span class="food-macros mono">' + fmt(e.amount) + (e.type === 'water' ? ' oz' : ' mg') + '</span>' +
+    const rows = habits.length ? habits.map(function(h){
+      const entries = habitDay[h.id] || [];
+      const isCheckin = !h.unit;
+      let bodyHtml;
+      if(isCheckin){
+        const done = entries.length > 0;
+        bodyHtml = '<button type="button" class="' + (done ? 'primary-btn' : 'ghost-btn') + ' habit-checkin-btn" data-toggle-checkin="' + h.id + '">' + (done ? '✓ Done today' : 'Mark done') + '</button>';
+      } else {
+        const total = habitTotal(h.id);
+        const entryRows = entries.map(function(e){
+          return '<div class="ingredient-row">' +
+            '<span class="ingredient-name">' + fmt(e.amount) + ' ' + escapeHtml(h.unit) + '</span>' +
+            '<button type="button" class="icon-btn" data-del-habit-entry="' + e.id + '" data-habit-id="' + h.id + '" aria-label="Remove entry">×</button>' +
+          '</div>';
+        }).join('');
+        bodyHtml =
+          '<div class="meal-total mono">' + fmt(total) + ' ' + escapeHtml(h.unit) + ' today</div>' +
+          '<form class="habit-log-form" data-habit-id="' + h.id + '">' +
+            '<input type="number" name="amount" placeholder="Amount (' + escapeHtml(h.unit) + ')" class="num-input" step="0.1" min="0" required>' +
+            '<button type="submit" class="ghost-btn">+ Log</button>' +
+          '</form>' +
+          (entryRows ? '<div class="ingredient-list">' + entryRows + '</div>' : '');
+      }
+      return '<div class="meal-card">' +
+        '<div class="meal-card-head">' +
+          '<span class="food-name">' + escapeHtml(h.name) + '</span>' +
+          '<button type="button" class="icon-btn" data-del-habit="' + h.id + '" aria-label="Delete habit">×</button>' +
         '</div>' +
-        '<button class="icon-btn" data-del-hydration="' + e.id + '" aria-label="Delete entry">×</button>' +
+        bodyHtml +
       '</div>';
-    }).join('') : '<p class="empty">Nothing logged yet today.</p>';
-
+    }).join('') : '<p class="empty">No habits yet — tap "New habit" to start tracking one.</p>';
     el.innerHTML =
-      '<div class="hydration-summary">' +
-        '<div class="hydration-stat"><span class="hydration-stat-label">Water</span><span class="hydration-stat-num mono">' + fmt(t.water) + ' <small>oz</small></span></div>' +
-        '<div class="hydration-stat"><span class="hydration-stat-label">Caffeine</span><span class="hydration-stat-num mono">' + fmt(t.caffeine) + ' <small>mg</small></span></div>' +
-      '</div>' +
-      '<div class="hydration-quick">' +
-        '<div class="hydration-quick-row">' +
-          '<span class="hydration-quick-label">Water</span>' +
-          '<button type="button" class="ghost-btn" data-hydro-quick="water:8">+8 oz</button>' +
-          '<button type="button" class="ghost-btn" data-hydro-quick="water:16">+16 oz</button>' +
-          '<button type="button" class="ghost-btn" data-hydro-quick="water:32">+32 oz</button>' +
-        '</div>' +
-        '<div class="hydration-quick-row">' +
-          '<span class="hydration-quick-label">Caffeine</span>' +
-          '<button type="button" class="ghost-btn" data-hydro-quick="caffeine:95">Coffee 95mg</button>' +
-          '<button type="button" class="ghost-btn" data-hydro-quick="caffeine:47">Tea 47mg</button>' +
-          '<button type="button" class="ghost-btn" data-hydro-quick="caffeine:80">Energy 80mg</button>' +
-        '</div>' +
-      '</div>' +
-      '<form id="hydrationForm" class="food-form">' +
-        '<div class="hydration-form-row">' +
-          '<select name="type" class="text-input">' +
-            '<option value="water">Water (oz)</option>' +
-            '<option value="caffeine">Caffeine (mg)</option>' +
-          '</select>' +
-          '<input type="number" name="amount" placeholder="Amount" min="0" step="1" class="num-input" required>' +
-        '</div>' +
-        '<button type="submit" class="primary-btn">Log</button>' +
-      '</form>' +
-      '<div class="food-list">' + listHtml + '</div>';
+      '<div class="saved-meals-head"><span>Today\'s habits</span><button type="button" id="addHabitBtn" class="link-btn">+ New habit</button></div>' +
+      '<div class="saved-meal-list">' + rows + '</div>';
+  }
+  function renderHabitForm(){
+    const f = document.getElementById('habitForm');
+    if(!f) return;
+    f.innerHTML =
+      '<label class="modal-label">Habit name<input type="text" name="habitName" class="text-input" required></label>' +
+      '<label class="modal-label">Unit (optional)<input type="text" name="unit" class="text-input" placeholder="e.g. oz, mg, minutes"></label>' +
+      '<p class="habit-empty-hint">Leave the unit blank for a simple done/not-done habit, like "Meditated" or "Took vitamins."</p>' +
+      '<button type="submit" class="primary-btn full">Save habit</button>';
   }
   function renderMeals(){
     const el = document.getElementById('mealsView');
@@ -1217,17 +1250,23 @@
     if(!calSelectedKey){
       return '<p class="empty">Tap a day to see what was logged.</p>';
     }
-    const info = calData[calSelectedKey] || {cal:0, dayIndex:null, exercises:[]};
+    const info = calData[calSelectedKey] || {cal:0, dayIndex:null, exercises:[], habits:{}};
     const splitLabel = (info.dayIndex === null || info.dayIndex === undefined) ? 'No split assigned' : DAY_LABELS[info.dayIndex];
     const exHtml = info.exercises.length ? info.exercises.map(function(ex){
       const setsStr = ex.sets.map(function(s){ return s.weight + '×' + s.reps; }).join('  ·  ');
       return '<div class="cal-exercise-row"><strong>' + escapeHtml(ex.name) + '</strong> <span class="mono">' + setsStr + '</span></div>';
     }).join('') : '<p class="empty">No exercises logged.</p>';
+    const habitsHtml = habits.length ? '<div class="cal-habits"><div class="cal-habits-label">Habits</div>' + habits.map(function(h){
+      const val = (info.habits && info.habits[h.id]) || 0;
+      const statusStr = !h.unit ? (val > 0 ? '✓ done' : '—') : (val > 0 ? fmt(val) + ' ' + escapeHtml(h.unit) : '—');
+      return '<div class="cal-exercise-row">' + escapeHtml(h.name) + ' <span class="mono">' + statusStr + '</span></div>';
+    }).join('') + '</div>' : '';
     return '<div class="cal-detail">' +
       '<div class="cal-detail-head"><h3>' + escapeHtml(formatShort(calSelectedKey)) + '</h3><button type="button" id="calGotoDay" class="link-btn">Open day →</button></div>' +
       '<div class="cal-detail-split">' + escapeHtml(splitLabel) + '</div>' +
       '<div class="cal-detail-macros mono">' + fmt(info.cal) + ' kcal logged</div>' +
       exHtml +
+      habitsHtml +
     '</div>';
   }
   function renderCalendar(){
@@ -1278,7 +1317,7 @@
     document.getElementById('dailySubTabs').hidden = currentPage !== 'daily';
     document.getElementById('macrosView').hidden = !(currentPage === 'daily' && activeTab === 'macros');
     document.getElementById('trainingView').hidden = !(currentPage === 'daily' && activeTab === 'training');
-    document.getElementById('hydrationView').hidden = !(currentPage === 'daily' && activeTab === 'hydration');
+    document.getElementById('habitsView').hidden = !(currentPage === 'daily' && activeTab === 'habits');
     document.getElementById('calendarView').hidden = currentPage !== 'calendar';
     document.getElementById('mealsView').hidden = currentPage !== 'meals';
     document.getElementById('statsView').hidden = currentPage !== 'stats';
@@ -1294,7 +1333,7 @@
     renderHeader();
     renderMacros();
     renderTraining();
-    renderHydration();
+    renderHabits();
     applyTabVisibility();
   }
   function switchTab(tab){
@@ -1361,6 +1400,15 @@
     if(m) m.hidden = true;
     addIngredientMealId = null;
   }
+  function openHabitModal(){
+    renderHabitForm();
+    const m = document.getElementById('habitModal');
+    if(m) m.hidden = false;
+  }
+  function closeHabitModal(){
+    const m = document.getElementById('habitModal');
+    if(m) m.hidden = true;
+  }
   function addPendingSetRow(){
     pendingSets.push({weight:'',reps:''});
     renderSetsBuilder();
@@ -1424,14 +1472,14 @@
     const toggleMealBtn = e.target.closest('[data-toggle-meal]');
     if(toggleMealBtn){ toggleMealExpanded(toggleMealBtn.dataset.toggleMeal); return; }
 
-    const hydroQuickBtn = e.target.closest('[data-hydro-quick]');
-    if(hydroQuickBtn){
-      const parts = hydroQuickBtn.dataset.hydroQuick.split(':');
-      addHydration(parts[0], parseFloat(parts[1]));
-      return;
-    }
-    const delHydroBtn = e.target.closest('[data-del-hydration]');
-    if(delHydroBtn){ deleteHydration(delHydroBtn.dataset.delHydration); return; }
+    if(e.target.closest('#addHabitBtn')){ openHabitModal(); return; }
+    if(e.target.closest('#closeHabit')){ closeHabitModal(); return; }
+    const delHabitBtn = e.target.closest('[data-del-habit]');
+    if(delHabitBtn){ deleteHabit(delHabitBtn.dataset.delHabit); return; }
+    const toggleCheckinBtn = e.target.closest('[data-toggle-checkin]');
+    if(toggleCheckinBtn){ toggleCheckinHabit(toggleCheckinBtn.dataset.toggleCheckin); return; }
+    const delHabitEntryBtn = e.target.closest('[data-del-habit-entry]');
+    if(delHabitEntryBtn){ deleteHabitEntry(delHabitEntryBtn.dataset.habitId, delHabitEntryBtn.dataset.delHabitEntry); return; }
 
     const suggestItem = e.target.closest('[data-suggest-meal]');
     if(suggestItem){
@@ -1618,12 +1666,22 @@
       saveBodyStat({day: day, weight: weight, bodyFatPct: bodyFatPct, bmi: bmi, muscleMass: muscleMass});
       return;
     }
-    if(e.target.id === 'hydrationForm'){
+    if(e.target.id === 'habitForm'){
+      e.preventDefault();
+      const f = e.target;
+      const name = f.habitName.value.trim();
+      if(!name){ showToast('Add a habit name', true); return; }
+      addHabit(name, f.unit.value.trim());
+      closeHabitModal();
+      showToast('Habit added');
+      return;
+    }
+    if(e.target.classList.contains('habit-log-form')){
       e.preventDefault();
       const f = e.target;
       const amount = parseFloat(f.amount.value);
       if(!amount || amount <= 0){ showToast('Enter an amount', true); return; }
-      addHydration(f.type.value, amount);
+      logHabit(f.dataset.habitId, amount);
       f.reset();
       showToast('Logged');
       return;
