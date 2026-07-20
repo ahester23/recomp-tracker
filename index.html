@@ -134,9 +134,15 @@
   .save-meal-check input{width:auto;accent-color:var(--plate-gold);}
 
   .habit-checkin-btn{width:100%;}
-  .habit-log-form{display:flex;gap:8px;margin-bottom:8px;}
-  .habit-log-form input{flex:1;}
   .habit-empty-hint{color:var(--steel);font-size:11px;margin-top:2px;}
+  .habit-progress-label{font-size:14px;font-weight:600;margin-bottom:8px;}
+  .habit-remaining{color:var(--steel);font-size:11.5px;margin-top:6px;}
+  .habit-remaining-done{color:var(--plate-green);font-weight:600;}
+  .habit-controls{display:flex;align-items:center;gap:10px;margin-top:12px;}
+  .habit-step-btn{background:var(--panel-2);border:1px solid var(--line);color:var(--chalk);width:36px;height:36px;flex-shrink:0;border-radius:50%;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .habit-step-btn:hover{border-color:var(--steel);}
+  .habit-amount-input{flex:1;text-align:center;font-family:var(--font-mono);}
+  .habit-slider{width:100%;margin-top:12px;accent-color:var(--plate-gold);}
 
   .meal-card{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:12px 14px;}
   .meal-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px;}
@@ -511,10 +517,7 @@
       return {id:r.id, name:r.name, sets:r.sets};
     }) };
     const byHabit = {};
-    (habitEntriesRes.data || []).forEach(function(r){
-      if(!byHabit[r.habit_id]) byHabit[r.habit_id] = [];
-      byHabit[r.habit_id].push({id:r.id, amount:r.amount});
-    });
+    (habitEntriesRes.data || []).forEach(function(r){ byHabit[r.habit_id] = r.amount; });
     habitDay = byHabit;
     pendingSets = [{weight:'',reps:''}];
   }
@@ -541,8 +544,10 @@
     if(error){ habits = []; return; }
     habits = data || [];
   }
-  async function addHabit(name, unit){
-    const { data, error } = await sb.from('habits').insert({user_id: userId, name: name, unit: unit || null}).select().single();
+  async function addHabit(name, unit, goal, step){
+    const { data, error } = await sb.from('habits').insert({
+      user_id: userId, name: name, unit: unit || null, goal: unit ? goal : null, step: step || 1
+    }).select().single();
     if(error){ showToast('Could not save — try again', true); return; }
     habits.push(data);
     renderHabits();
@@ -555,26 +560,22 @@
     const { error } = await sb.from('habits').delete().eq('id', id).eq('user_id', userId);
     if(error){ habits = prev; renderHabits(); showToast('Could not delete — try again', true); }
   }
-  async function logHabit(habitId, amount){
-    const { data, error } = await sb.from('habit_entries').insert({
-      user_id: userId, habit_id: habitId, day: currentKey(), amount: amount
-    }).select().single();
-    if(error){ showToast('Could not save — try again', true); return; }
-    if(!habitDay[habitId]) habitDay[habitId] = [];
-    habitDay[habitId].push({id:data.id, amount:data.amount});
-    renderHabits();
-  }
-  async function deleteHabitEntry(habitId, entryId){
+  async function setHabitAmount(habitId, amount){
+    const clamped = Math.max(0, amount);
     const prev = habitDay[habitId];
-    habitDay[habitId] = (habitDay[habitId]||[]).filter(function(e){ return e.id !== entryId; });
+    habitDay[habitId] = clamped;
     renderHabits();
-    const { error } = await sb.from('habit_entries').delete().eq('id', entryId).eq('user_id', userId);
-    if(error){ habitDay[habitId] = prev; renderHabits(); showToast('Could not delete — try again', true); }
+    const { error } = await sb.from('habit_entries').upsert({
+      user_id: userId, habit_id: habitId, day: currentKey(), amount: clamped
+    }, {onConflict: 'habit_id,day'});
+    if(error){ habitDay[habitId] = prev; renderHabits(); showToast('Could not save — try again', true); }
+  }
+  function stepHabit(habitId, delta){
+    setHabitAmount(habitId, (habitDay[habitId] || 0) + delta);
   }
   function toggleCheckinHabit(habitId){
-    const entries = habitDay[habitId] || [];
-    if(entries.length){ deleteHabitEntry(habitId, entries[0].id); }
-    else { logHabit(habitId, 1); }
+    const done = (habitDay[habitId] || 0) > 0;
+    setHabitAmount(habitId, done ? 0 : 1);
   }
   async function saveTargets(t){
     targets = t;
@@ -953,34 +954,38 @@
       '</form>' +
       '<div class="food-list">' + listHtml + '</div>';
   }
-  function habitTotal(habitId){
-    return (habitDay[habitId]||[]).reduce(function(sum, e){ return sum + (e.amount||0); }, 0);
-  }
+  const HABIT_PALETTE = ['plate-red','plate-gold','plate-blue','plate-green'];
+  function habitColor(index){ return 'var(--' + HABIT_PALETTE[index % HABIT_PALETTE.length] + ')'; }
   function renderHabits(){
     const el = document.getElementById('habitsView');
     if(!el) return;
-    const rows = habits.length ? habits.map(function(h){
-      const entries = habitDay[h.id] || [];
+    const rows = habits.length ? habits.map(function(h, idx){
+      const amount = habitDay[h.id] || 0;
       const isCheckin = !h.unit;
       let bodyHtml;
       if(isCheckin){
-        const done = entries.length > 0;
+        const done = amount > 0;
         bodyHtml = '<button type="button" class="' + (done ? 'primary-btn' : 'ghost-btn') + ' habit-checkin-btn" data-toggle-checkin="' + h.id + '">' + (done ? '✓ Done today' : 'Mark done') + '</button>';
       } else {
-        const total = habitTotal(h.id);
-        const entryRows = entries.map(function(e){
-          return '<div class="ingredient-row">' +
-            '<span class="ingredient-name">' + fmt(e.amount) + ' ' + escapeHtml(h.unit) + '</span>' +
-            '<button type="button" class="icon-btn" data-del-habit-entry="' + e.id + '" data-habit-id="' + h.id + '" aria-label="Remove entry">×</button>' +
-          '</div>';
-        }).join('');
+        const goal = h.goal || 0;
+        const step = h.step || 1;
+        const done = goal > 0 && amount >= goal;
+        const pct = goal > 0 ? Math.min(100, (amount/goal)*100) : 0;
+        const color = done ? 'var(--plate-green)' : habitColor(idx);
+        const statusLine = goal > 0
+          ? (done ? 'Goal reached 🎉' : fmt(goal-amount) + ' ' + escapeHtml(h.unit) + ' to go')
+          : '';
+        const sliderMax = Math.max(goal, amount, step*4, 10);
         bodyHtml =
-          '<div class="meal-total mono">' + fmt(total) + ' ' + escapeHtml(h.unit) + ' today</div>' +
-          '<form class="habit-log-form" data-habit-id="' + h.id + '">' +
-            '<input type="number" name="amount" placeholder="Amount (' + escapeHtml(h.unit) + ')" class="num-input" step="0.1" min="0" required>' +
-            '<button type="submit" class="ghost-btn">+ Log</button>' +
-          '</form>' +
-          (entryRows ? '<div class="ingredient-list">' + entryRows + '</div>' : '');
+          '<div class="habit-progress-label mono">' + fmt(amount) + (goal>0 ? ' / ' + fmt(goal) : '') + ' ' + escapeHtml(h.unit) + '</div>' +
+          (goal > 0 ? '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' : '') +
+          (statusLine ? '<div class="habit-remaining' + (done ? ' habit-remaining-done' : '') + '">' + statusLine + '</div>' : '') +
+          '<div class="habit-controls">' +
+            '<button type="button" class="habit-step-btn" data-habit-step="' + h.id + ':-' + step + '" aria-label="Decrease">−</button>' +
+            '<input type="number" class="num-input habit-amount-input" data-habit-amount-input="' + h.id + '" value="' + amount + '" step="' + step + '" min="0">' +
+            '<button type="button" class="habit-step-btn" data-habit-step="' + h.id + ':' + step + '" aria-label="Increase">+</button>' +
+          '</div>' +
+          '<input type="range" class="habit-slider" min="0" max="' + sliderMax + '" step="' + step + '" value="' + amount + '" data-habit-slider="' + h.id + '">';
       }
       return '<div class="meal-card">' +
         '<div class="meal-card-head">' +
@@ -999,7 +1004,9 @@
     if(!f) return;
     f.innerHTML =
       '<label class="modal-label">Habit name<input type="text" name="habitName" class="text-input" required></label>' +
-      '<label class="modal-label">Unit (optional)<input type="text" name="unit" class="text-input" placeholder="e.g. oz, mg, minutes"></label>' +
+      '<label class="modal-label">Unit (optional)<input type="text" name="unit" class="text-input" placeholder="e.g. oz, minutes, pages"></label>' +
+      '<label class="modal-label">Daily goal (required if you set a unit)<input type="number" name="goal" class="num-input" min="0" step="0.1"></label>' +
+      '<label class="modal-label">Step size for the +/− buttons<input type="number" name="step" class="num-input" min="0.1" step="0.1" value="1"></label>' +
       '<p class="habit-empty-hint">Leave the unit blank for a simple done/not-done habit, like "Meditated" or "Took vitamins."</p>' +
       '<button type="submit" class="primary-btn full">Save habit</button>';
   }
@@ -1257,7 +1264,10 @@
     }).join('') : '<p class="empty">No exercises logged.</p>';
     const habitsHtml = habits.length ? '<div class="cal-habits"><div class="cal-habits-label">Habits</div>' + habits.map(function(h){
       const val = (info.habits && info.habits[h.id]) || 0;
-      const statusStr = !h.unit ? (val > 0 ? '✓ done' : '—') : (val > 0 ? fmt(val) + ' ' + escapeHtml(h.unit) : '—');
+      let statusStr;
+      if(!h.unit){ statusStr = val > 0 ? '✓ done' : '—'; }
+      else if(h.goal > 0){ statusStr = fmt(val) + ' / ' + fmt(h.goal) + ' ' + escapeHtml(h.unit); }
+      else { statusStr = val > 0 ? fmt(val) + ' ' + escapeHtml(h.unit) : '—'; }
       return '<div class="cal-exercise-row">' + escapeHtml(h.name) + ' <span class="mono">' + statusStr + '</span></div>';
     }).join('') + '</div>' : '';
     return '<div class="cal-detail">' +
@@ -1477,8 +1487,12 @@
     if(delHabitBtn){ deleteHabit(delHabitBtn.dataset.delHabit); return; }
     const toggleCheckinBtn = e.target.closest('[data-toggle-checkin]');
     if(toggleCheckinBtn){ toggleCheckinHabit(toggleCheckinBtn.dataset.toggleCheckin); return; }
-    const delHabitEntryBtn = e.target.closest('[data-del-habit-entry]');
-    if(delHabitEntryBtn){ deleteHabitEntry(delHabitEntryBtn.dataset.habitId, delHabitEntryBtn.dataset.delHabitEntry); return; }
+    const habitStepBtn = e.target.closest('[data-habit-step]');
+    if(habitStepBtn){
+      const parts = habitStepBtn.dataset.habitStep.split(':');
+      stepHabit(parts[0], parseFloat(parts[1]));
+      return;
+    }
 
     const suggestItem = e.target.closest('[data-suggest-meal]');
     if(suggestItem){
@@ -1544,6 +1558,12 @@
     if(t.matches('[data-servings-meal]')){
       const servings = parseFloat(t.value) || 1;
       updateMealServings(t.dataset.servingsMeal, servings);
+    }
+    if(t.matches('[data-habit-amount-input]')){
+      setHabitAmount(t.dataset.habitAmountInput, parseFloat(t.value) || 0);
+    }
+    if(t.matches('[data-habit-slider]')){
+      setHabitAmount(t.dataset.habitSlider, parseFloat(t.value) || 0);
     }
   });
 
@@ -1669,20 +1689,14 @@
       e.preventDefault();
       const f = e.target;
       const name = f.habitName.value.trim();
+      const unit = f.unit.value.trim();
       if(!name){ showToast('Add a habit name', true); return; }
-      addHabit(name, f.unit.value.trim());
+      const goal = parseFloat(f.goal.value) || 0;
+      if(unit && goal <= 0){ showToast('Set a daily goal for this habit', true); return; }
+      const step = parseFloat(f.step.value) || 1;
+      addHabit(name, unit, goal, step);
       closeHabitModal();
       showToast('Habit added');
-      return;
-    }
-    if(e.target.classList.contains('habit-log-form')){
-      e.preventDefault();
-      const f = e.target;
-      const amount = parseFloat(f.amount.value);
-      if(!amount || amount <= 0){ showToast('Enter an amount', true); return; }
-      logHabit(f.dataset.habitId, amount);
-      f.reset();
-      showToast('Logged');
       return;
     }
     if(e.target.id === 'exerciseForm'){
